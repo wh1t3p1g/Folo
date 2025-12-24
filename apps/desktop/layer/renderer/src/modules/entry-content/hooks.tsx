@@ -1,7 +1,5 @@
-import { isFreeRole } from "@follow/constants"
 import { useEntry, usePrefetchEntryDetail } from "@follow/store/entry/hooks"
 import { useEntryTranslation, usePrefetchEntryTranslation } from "@follow/store/translation/hooks"
-import { useUserRole } from "@follow/store/user/hooks"
 import { tracker } from "@follow/tracker"
 import { createElement, useCallback, useMemo } from "react"
 import { useTranslation } from "react-i18next"
@@ -9,10 +7,8 @@ import { toast } from "sonner"
 
 import { useShowAITranslation } from "~/atoms/ai-translation"
 import { useEntryIsInReadability, useEntryIsInReadabilitySuccess } from "~/atoms/readability"
-import { useActionLanguage } from "~/atoms/settings/general"
+import { useActionLanguage, useGeneralSettingKey } from "~/atoms/settings/general"
 import { useModalStack } from "~/components/ui/modal/stacked/hooks"
-import { useByokTranslation } from "~/hooks/biz/useByokTranslation"
-import { isByokEnabled } from "~/lib/byok-ai"
 
 import { ImageGalleryContent } from "./components/ImageGalleryContent"
 
@@ -51,39 +47,24 @@ export const useEntryContent = (entryId: string) => {
   const isReadabilitySuccess = useEntryIsInReadabilitySuccess(entryId)
 
   const enableTranslation = useShowAITranslation()
-  const userRole = useUserRole()
   const actionLanguage = useActionLanguage()
-  const target = isReadabilitySuccess ? "readabilityContent" : "content"
-
-  // Check if BYOK is enabled
-  const byokEnabled = isByokEnabled()
-
-  // Use BYOK translation if enabled
-  const { translation: byokTranslation } = useByokTranslation({
-    entryId,
-    language: actionLanguage,
-    enabled: enableTranslation && byokEnabled,
-    withContent: true,
-    target,
-  })
-
-  // Use server translation if BYOK is not enabled
-  const shouldPrefetchTranslation = enableTranslation && !isFreeRole(userRole) && !byokEnabled
+  const translationMode = useGeneralSettingKey("translationMode")
   const contentTranslated = useEntryTranslation({
     entryId,
     language: actionLanguage,
-    enabled: enableTranslation && !byokEnabled,
+    enabled: enableTranslation,
   })
   usePrefetchEntryTranslation({
     entryIds: [entryId],
-    enabled: shouldPrefetchTranslation,
+    enabled: enableTranslation,
     language: actionLanguage,
     withContent: true,
-    target,
+    target: isReadabilitySuccess ? "readabilityContent" : "content",
+    mode: translationMode,
   })
 
   // Use BYOK translation if available, otherwise fall back to server translation
-  const finalTranslation = byokEnabled ? byokTranslation : contentTranslated
+  const finalTranslation = contentTranslated
 
   return useMemo(() => {
     const entryContent = isInReadabilityMode

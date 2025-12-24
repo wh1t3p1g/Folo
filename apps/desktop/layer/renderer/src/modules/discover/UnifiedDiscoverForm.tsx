@@ -17,27 +17,28 @@ import { zodResolver } from "@hookform/resolvers/zod"
 import { repository } from "@pkg"
 import { useMutation } from "@tanstack/react-query"
 import { produce } from "immer"
-import { atom, useAtomValue, useStore } from "jotai"
 import type { ChangeEvent, CompositionEvent } from "react"
-import { startTransition, useCallback, useEffect, useMemo } from "react"
+import { startTransition, useCallback, useEffect, useMemo, useRef } from "react"
 import { useForm } from "react-hook-form"
 import { useTranslation } from "react-i18next"
 import { useSearchParams } from "react-router"
 import { z } from "zod"
 
-import { useIsInMASReview } from "~/atoms/server-configs"
 import { useModalStack } from "~/components/ui/modal/stacked/hooks"
 import { useRequireLogin } from "~/hooks/common/useRequireLogin"
 import { followClient } from "~/lib/api-client"
 
+import {
+  getDiscoverSearchData,
+  setDiscoverSearchData,
+  useDiscoverSearchData,
+} from "./atoms/discover"
 import { DiscoverFeedCard } from "./DiscoverFeedCard"
 import { DiscoverImport } from "./DiscoverImport"
 import { DiscoverInboxList } from "./DiscoverInboxList"
 import { DiscoverTransform } from "./DiscoverTransform"
 import { DiscoverUser } from "./DiscoverUser"
 import { FeedForm } from "./FeedForm"
-
-const discoverSearchDataAtom = atom<Record<string, DiscoveryItem[]>>()
 
 // Auto-detect input type
 function detectInputType(value: string): "rss" | "rsshub" | "search" {
@@ -94,11 +95,9 @@ export function UnifiedDiscoverForm() {
   const [searchParams, setSearchParams] = useSearchParams()
   const keywordFromSearch = searchParams.get("keyword") || ""
   const { t } = useTranslation()
-  const isInMASReview = useIsInMASReview()
   const { ensureLogin } = useRequireLogin()
   const { present, dismissAll } = useModalStack()
   const isMobile = useMobile()
-  const jotaiStore = useStore()
 
   // Auto-detect input type based on current value
   const detectedType = useMemo(() => {
@@ -120,7 +119,7 @@ export function UnifiedDiscoverForm() {
 
   const { watch, trigger } = form
   const target = watch("target")
-  const atomKey = keywordFromSearch + target
+  const atomKey = useRef(keywordFromSearch + target)
 
   // Validate default value from search params
   useEffect(() => {
@@ -130,7 +129,7 @@ export function UnifiedDiscoverForm() {
     trigger("keyword")
   }, [trigger, keywordFromSearch])
 
-  const discoverSearchData = useAtomValue(discoverSearchDataAtom)?.[atomKey] || []
+  const discoverSearchData = useDiscoverSearchData()?.[atomKey.current] || []
 
   const mutation = useMutation({
     mutationFn: async ({ keyword, target }: { keyword: string; target: "feeds" | "lists" }) => {
@@ -162,17 +161,14 @@ export function UnifiedDiscoverForm() {
       }
 
       // For search, perform discovery
-      let { data } = await followClient.api.discover.discover({
+      const { data } = await followClient.api.discover.discover({
         keyword: keyword.trim(),
         target,
       })
-      if (isInMASReview) {
-        data = data.filter((item) => !item.list?.fee)
-      }
 
-      jotaiStore.set(discoverSearchDataAtom, (prev) => ({
+      setDiscoverSearchData((prev) => ({
         ...prev,
-        [atomKey]: data,
+        [atomKey.current]: data,
       }))
 
       return data
@@ -233,12 +229,11 @@ export function UnifiedDiscoverForm() {
 
   const handleSuccess = useCallback(
     (item: DiscoveryItem) => {
-      const currentData = jotaiStore.get(discoverSearchDataAtom)
+      const currentData = getDiscoverSearchData()
       if (!currentData) return
-      jotaiStore.set(
-        discoverSearchDataAtom,
+      setDiscoverSearchData(
         produce(currentData, (draft) => {
-          const sub = (draft[atomKey] || []).find((i) => {
+          const sub = (draft[atomKey.current] || []).find((i) => {
             if (item.feed) {
               return i.feed?.id === item.feed.id
             }
@@ -252,17 +247,16 @@ export function UnifiedDiscoverForm() {
         }),
       )
     },
-    [atomKey, jotaiStore],
+    [atomKey],
   )
 
   const handleUnSubscribed = useCallback(
     (item: DiscoveryItem) => {
-      const currentData = jotaiStore.get(discoverSearchDataAtom)
+      const currentData = getDiscoverSearchData()
       if (!currentData) return
-      jotaiStore.set(
-        discoverSearchDataAtom,
+      setDiscoverSearchData(
         produce(currentData, (draft) => {
-          const sub = (draft[atomKey] || []).find(
+          const sub = (draft[atomKey.current] || []).find(
             (i) => i.feed?.id === item.feed?.id || i.list?.id === item.list?.id,
           )
           if (!sub) return
@@ -272,7 +266,7 @@ export function UnifiedDiscoverForm() {
         }),
       )
     },
-    [atomKey, jotaiStore],
+    [atomKey],
   )
 
   const handleTargetChange = useCallback(
@@ -286,6 +280,7 @@ export function UnifiedDiscoverForm() {
     if (!ensureLogin()) {
       return
     }
+    atomKey.current = values.keyword + values.target
     mutation.mutate({ keyword: values.keyword, target: values.target })
   }
 
@@ -471,10 +466,7 @@ export function UnifiedDiscoverForm() {
                 className="flex cursor-button items-center justify-between gap-2 hover:text-accent"
                 type="button"
                 onClick={() => {
-                  jotaiStore.set(discoverSearchDataAtom, {
-                    ...jotaiStore.get(discoverSearchDataAtom),
-                    [atomKey]: [],
-                  })
+                  setDiscoverSearchData({})
                   mutation.reset()
                 }}
               >
