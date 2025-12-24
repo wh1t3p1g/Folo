@@ -1,5 +1,4 @@
 import { useEntry } from "@follow/store/entry/hooks"
-import { usePrefetchSummary } from "@follow/store/summary/hooks"
 import { useTranslation } from "react-i18next"
 
 import { useShowAISummary } from "~/atoms/ai-summary"
@@ -12,6 +11,7 @@ import {
 } from "~/atoms/settings/ai"
 import { useActionLanguage } from "~/atoms/settings/general"
 import { AISummaryCardBase } from "~/components/ui/ai-summary-card"
+import { usePrefetchSummaryByok } from "~/hooks/biz/useByokSummary"
 
 export function AISummary({ entryId }: { entryId: string }) {
   const { t } = useTranslation()
@@ -25,7 +25,8 @@ export function AISummary({ entryId }: { entryId: string }) {
   const aiChatPanelStyle = useAIChatPanelStyle()
   const isAIPanelVisible = useAIPanelVisibility()
 
-  const summary = usePrefetchSummary({
+  // Use BYOK-aware summary hook
+  const summary = usePrefetchSummaryByok({
     actionLanguage,
     entryId,
     target: isInReadabilitySuccess ? "readabilityContent" : "content",

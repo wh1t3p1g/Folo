@@ -6,7 +6,6 @@ import {
 } from "@follow/components/ui/lexical-rich-editor/utils.js"
 import { isFreeRole } from "@follow/constants"
 import { getCategoryFeedIds } from "@follow/store/subscription/getter"
-import { usePrefetchSummary } from "@follow/store/summary/hooks"
 import { useUserRole } from "@follow/store/user/hooks"
 import { tracker } from "@follow/tracker"
 import { detectIsEditableElement, nextFrame } from "@follow/utils"
@@ -22,6 +21,7 @@ import { useEventCallback, useEventListener } from "usehooks-ts"
 import { useAISettingKey } from "~/atoms/settings/ai"
 import { useActionLanguage } from "~/atoms/settings/general"
 import { ROUTE_FEED_IN_FOLDER } from "~/constants"
+import { usePrefetchSummaryByok } from "~/hooks/biz/useByokSummary"
 import { getRouteParams } from "~/hooks/biz/useRouteParams"
 import { useRequireLogin } from "~/hooks/common/useRequireLogin"
 import { useAutoScroll } from "~/modules/ai-chat/hooks/useAutoScroll"
@@ -74,7 +74,8 @@ const ChatInterfaceContent = ({ centerInputOnEmpty }: ChatInterfaceProps) => {
   const mainEntryId = useMainEntryId()
   const actionLanguage = useActionLanguage()
 
-  usePrefetchSummary({
+  // Use BYOK-aware summary hook
+  usePrefetchSummaryByok({
     entryId: mainEntryId || "",
     target: "content",
     actionLanguage,

@@ -1,32 +1,57 @@
 import { followClient } from "~/lib/api-client"
+import { generateTitleWithByok, isByokEnabled } from "~/lib/byok-ai"
 
 import { AIPersistService } from "../services"
 import type { SendingUIMessage } from "../store/types"
 
-export const generateChatTitle = async (chatId: string, messages: SendingUIMessage[]) => {
-  const relevantMessages = messages.map((msg) => {
-    let content = ""
-    if (msg.parts && Array.isArray(msg.parts)) {
-      for (const part of msg.parts) {
-        switch (part.type) {
-          case "text": {
-            content += `${part.text}`
-            break
-          }
-          case "data-rich-text": {
-            content += part.data.text
-            break
-          }
+/**
+ * Extract text content from message parts
+ */
+function extractMessageContent(msg: SendingUIMessage): string {
+  let content = ""
+  if (msg.parts && Array.isArray(msg.parts)) {
+    for (const part of msg.parts) {
+      switch (part.type) {
+        case "text": {
+          content += `${part.text}`
+          break
+        }
+        case "data-rich-text": {
+          content += part.data.text
+          break
         }
       }
     }
+  }
+  return content
+}
 
-    return {
-      role: msg.role,
-      content,
+/**
+ * Generate chat title using BYOK if enabled, otherwise use server API
+ */
+export const generateChatTitle = async (
+  chatId: string,
+  messages: SendingUIMessage[],
+): Promise<string | null> => {
+  const relevantMessages = messages.map((msg) => ({
+    role: msg.role,
+    content: extractMessageContent(msg),
+  }))
+
+  // Try BYOK first if enabled
+  if (isByokEnabled()) {
+    try {
+      const title = await generateTitleWithByok({ messages: relevantMessages })
+      if (title) {
+        return title
+      }
+    } catch (error) {
+      console.error("[BYOK] Title generation failed, falling back to server:", error)
+      // Fall through to server API
     }
-  })
+  }
 
+  // Fallback to server API
   const response = await followClient.api.ai
     .summaryTitle({
       chatId,

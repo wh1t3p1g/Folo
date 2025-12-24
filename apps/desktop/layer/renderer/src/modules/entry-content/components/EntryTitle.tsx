@@ -11,8 +11,10 @@ import { useShowAITranslation } from "~/atoms/ai-translation"
 import { useActionLanguage } from "~/atoms/settings/general"
 import { useUISettingKey } from "~/atoms/settings/ui"
 import { RelativeTime } from "~/components/ui/datetime"
+import { useByokTranslation } from "~/hooks/biz/useByokTranslation"
 import { useNavigateEntry } from "~/hooks/biz/useNavigateEntry"
 import { useFeedSafeUrl } from "~/hooks/common/useFeedSafeUrl"
+import { isByokEnabled } from "~/lib/byok-ai"
 import type { FeedIconEntry } from "~/modules/feed/feed-icon"
 import { FeedIcon } from "~/modules/feed/feed-icon"
 import { getPreferredTitle } from "~/store/feed/hooks"
@@ -74,11 +76,27 @@ export const EntryTitle = ({
   const populatedFullHref = useFeedSafeUrl(entryId)
   const enableTranslation = useShowAITranslation()
   const actionLanguage = useActionLanguage()
-  const translation = useEntryTranslation({
+
+  // Check if BYOK is enabled
+  const byokEnabled = isByokEnabled()
+
+  // Use BYOK translation if enabled
+  const { translation: byokTranslation } = useByokTranslation({
     entryId,
     language: actionLanguage,
-    enabled: enableTranslation,
+    enabled: enableTranslation && byokEnabled,
+    withContent: false, // Only translate title for this component
   })
+
+  // Use server translation if BYOK is not enabled
+  const serverTranslation = useEntryTranslation({
+    entryId,
+    language: actionLanguage,
+    enabled: enableTranslation && !byokEnabled,
+  })
+
+  // Use BYOK translation if available, otherwise fall back to server translation
+  const translation = byokEnabled ? byokTranslation : serverTranslation
 
   const dateFormat = useUISettingKey("dateFormat")
 

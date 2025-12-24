@@ -11,6 +11,8 @@ import { useShowAITranslation } from "~/atoms/ai-translation"
 import { useEntryIsInReadability, useEntryIsInReadabilitySuccess } from "~/atoms/readability"
 import { useActionLanguage } from "~/atoms/settings/general"
 import { useModalStack } from "~/components/ui/modal/stacked/hooks"
+import { useByokTranslation } from "~/hooks/biz/useByokTranslation"
+import { isByokEnabled } from "~/lib/byok-ai"
 
 import { ImageGalleryContent } from "./components/ImageGalleryContent"
 
@@ -50,28 +52,46 @@ export const useEntryContent = (entryId: string) => {
 
   const enableTranslation = useShowAITranslation()
   const userRole = useUserRole()
-  const shouldPrefetchTranslation = enableTranslation && !isFreeRole(userRole)
   const actionLanguage = useActionLanguage()
+  const target = isReadabilitySuccess ? "readabilityContent" : "content"
+
+  // Check if BYOK is enabled
+  const byokEnabled = isByokEnabled()
+
+  // Use BYOK translation if enabled
+  const { translation: byokTranslation } = useByokTranslation({
+    entryId,
+    language: actionLanguage,
+    enabled: enableTranslation && byokEnabled,
+    withContent: true,
+    target,
+  })
+
+  // Use server translation if BYOK is not enabled
+  const shouldPrefetchTranslation = enableTranslation && !isFreeRole(userRole) && !byokEnabled
   const contentTranslated = useEntryTranslation({
     entryId,
     language: actionLanguage,
-    enabled: enableTranslation,
+    enabled: enableTranslation && !byokEnabled,
   })
   usePrefetchEntryTranslation({
     entryIds: [entryId],
     enabled: shouldPrefetchTranslation,
     language: actionLanguage,
     withContent: true,
-    target: isReadabilitySuccess ? "readabilityContent" : "content",
+    target,
   })
+
+  // Use BYOK translation if available, otherwise fall back to server translation
+  const finalTranslation = byokEnabled ? byokTranslation : contentTranslated
 
   return useMemo(() => {
     const entryContent = isInReadabilityMode
       ? entry?.readabilityContent
       : (entry?.content ?? data?.content)
     const translatedContent = isInReadabilityMode
-      ? contentTranslated?.readabilityContent
-      : contentTranslated?.content
+      ? finalTranslation?.readabilityContent
+      : finalTranslation?.content
     const content = translatedContent || entryContent
     return {
       content,
@@ -79,8 +99,8 @@ export const useEntryContent = (entryId: string) => {
       isPending,
     }
   }, [
-    contentTranslated?.content,
-    contentTranslated?.readabilityContent,
+    finalTranslation?.content,
+    finalTranslation?.readabilityContent,
     data?.content,
     entry?.content,
     error,
