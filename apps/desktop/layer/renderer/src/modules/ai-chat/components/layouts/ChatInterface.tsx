@@ -10,7 +10,6 @@ import { useUserRole } from "@follow/store/user/hooks"
 import { tracker } from "@follow/tracker"
 import { detectIsEditableElement, nextFrame } from "@follow/utils"
 import type { ConfigResponse } from "@follow-app/client-sdk"
-import { ErrorBoundary } from "@sentry/react"
 import type { EditorState } from "lexical"
 import { createEditor } from "lexical"
 import { nanoid } from "nanoid"
@@ -20,6 +19,7 @@ import { useEventCallback, useEventListener } from "usehooks-ts"
 
 import { useAISettingKey } from "~/atoms/settings/ai"
 import { useActionLanguage } from "~/atoms/settings/general"
+import { ErrorBoundary } from "~/components/common/ErrorBoundary"
 import { ROUTE_FEED_IN_FOLDER } from "~/constants"
 import { usePrefetchSummaryByok } from "~/hooks/biz/useByokSummary"
 import { getRouteParams } from "~/hooks/biz/useRouteParams"
@@ -305,6 +305,7 @@ const ChatInterfaceContent = ({ centerInputOnEmpty }: ChatInterfaceProps) => {
 
 interface ChatInterfaceProps {
   centerInputOnEmpty?: boolean
+  visualOffsetY?: string | number
 }
 export const ChatInterface = (props: ChatInterfaceProps) => (
   <ErrorBoundary fallback={AIErrorFallback}>
