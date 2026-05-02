@@ -221,7 +221,7 @@ export async function generateSummaryWithByok(options: ByokSummaryOptions): Prom
   } else if (provider.provider === "openrouter") {
     model = "openai/gpt-4o-mini"
   } else if (isDeepSeek) {
-    model = "deepseek-chat"
+    model = "deepseek-v4-flash"
   } else if (isQwen) {
     model = "qwen-turbo"
   } else if (isMoonshot) {
@@ -367,7 +367,7 @@ Return ONLY the title text, nothing else. No quotes, no explanation.`
   } else if (provider.provider === "openrouter") {
     model = "openai/gpt-4o-mini"
   } else if (isDeepSeek) {
-    model = "deepseek-chat"
+    model = "deepseek-v4-flash"
   } else if (isQwen) {
     model = "qwen-turbo"
   } else if (isMoonshot) {
@@ -445,7 +445,7 @@ ${JSON.stringify(fieldsToTranslate, null, 2)}`
   } else if (provider.provider === "openrouter") {
     model = "openai/gpt-4o-mini"
   } else if (isDeepSeek) {
-    model = "deepseek-chat"
+    model = "deepseek-v4-flash"
   } else if (isQwen) {
     model = "qwen-turbo"
   } else if (isMoonshot) {
