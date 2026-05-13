@@ -90,13 +90,12 @@ class UserSyncService {
     const user = apiMorph.toWhoami(res.user)
     immerSet((state) => {
       state.whoami = { ...user, emailVerified: res.user?.emailVerified ?? false }
-      // Force set role to Admin for maximum permissions
-      state.role = UserRole.Admin
+      state.role = res.user?.role as UserRole | null
       if (res.user?.roleEndAt) {
         state.roleEndAt = new Date(res.user?.roleEndAt)
       }
-      state.rsshubSubscriptionLimit = null
-      state.feedSubscriptionLimit = null
+      state.rsshubSubscriptionLimit = res.rsshubSubscriptionLimit ?? null
+      state.feedSubscriptionLimit = res.feedSubscriptionLimit ?? null
     })
     userActions.upsertMany([user as unknown as UserModel])
 
