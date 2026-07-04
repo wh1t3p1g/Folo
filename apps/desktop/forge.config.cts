@@ -139,9 +139,18 @@ const config: ForgeConfig = {
             }
           : () => ({
               entitlements: "build/entitlements.mac.plist",
+              // Ad-hoc signing is incompatible with hardened runtime's library
+              // validation (ad-hoc code has no Team ID, so nested frameworks fail
+              // the team-ID match and the app crashes at launch). Disable it only
+              // for local ad-hoc builds; real Developer ID builds keep it on.
+              ...(process.env.OSX_SIGN_IDENTITY === "-" && { hardenedRuntime: false }),
             }),
       keychain: process.env.OSX_SIGN_KEYCHAIN_PATH,
       identity: process.env.OSX_SIGN_IDENTITY,
+      // Ad-hoc signing ("-"): skip keychain identity lookup so osx-sign uses the
+      // identity verbatim. Only engages when OSX_SIGN_IDENTITY is exactly "-";
+      // real Developer ID / MAS signing keeps default validation.
+      ...(process.env.OSX_SIGN_IDENTITY === "-" && { identityValidation: false }),
       provisioningProfile: process.env.OSX_SIGN_PROVISIONING_PROFILE_PATH,
     },
     ...(process.env.APPLE_ID &&

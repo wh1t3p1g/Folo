@@ -1,14 +1,17 @@
-import { DEV, MICROSOFT_STORE_BUILD, MODE, ModeEnum } from "@follow/shared/constants"
+import { MICROSOFT_STORE_BUILD } from "@follow/shared/constants"
 
 const isStoreDistribution = Boolean(process.mas || MICROSOFT_STORE_BUILD)
 
 export const appUpdaterConfig = {
-  // Disable renderer hot update will trigger app update when available
-  enableRenderHotUpdate: !DEV && MODE !== ModeEnum.staging,
+  // Fork build: never hot-update the renderer from ota.folo.is. The official OTA
+  // bundle lacks this fork's features (e.g. BYOK AI summaries) and, being >= the
+  // app version, would override the renderer bundled in app.asar and run instead
+  // of it. Keep this false so the app always loads the local bundled renderer.
+  enableRenderHotUpdate: false,
   enableCoreUpdate: !isStoreDistribution,
 
-  // Disable app update will also disable renderer hot update and core update
-  enableAppUpdate: true,
+  // Fork build: don't auto-replace this custom build with an official release.
+  enableAppUpdate: false,
   enableDistributionStoreUpdate: isStoreDistribution,
 
   app: {
