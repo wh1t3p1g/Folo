@@ -10,6 +10,7 @@ import { useSpotlightSettingKey } from "~/atoms/settings/spotlight"
 import { CopyButton } from "~/components/ui/button/CopyButton"
 import { Markdown } from "~/components/ui/markdown/Markdown"
 import { useFeature } from "~/hooks/biz/useFeature"
+import { useIsByokModeEnabled } from "~/lib/byok-settings"
 import { useSettingModal } from "~/modules/settings/modal/useSettingModal"
 
 interface AISummaryCardBaseProps {
@@ -110,11 +111,14 @@ export const AISummaryCardBase: React.FC<AISummaryCardBaseProps> = ({
 }) => {
   const { t } = useTranslation("app")
   const aiEnabled = useFeature("ai")
+  const byokModeEnabled = useIsByokModeEnabled()
   const spotlightRules = useSpotlightSettingKey("spotlights")
 
   const hasContent = !isLoading && content
   const shouldSuggestUpgrade =
-    useIsPaymentEnabled() && error instanceof FollowAPIError ? error.status === 402 : undefined
+    useIsPaymentEnabled() && !byokModeEnabled && error instanceof FollowAPIError
+      ? error.status === 402
+      : undefined
 
   return (
     <div

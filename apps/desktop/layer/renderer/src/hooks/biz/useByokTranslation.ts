@@ -12,7 +12,8 @@ import type { SupportedLanguages } from "@follow-app/client-sdk"
 import { useQuery } from "@tanstack/react-query"
 import { useCallback } from "react"
 
-import { generateTranslationWithByok, isByokEnabled } from "~/lib/byok-ai"
+import { generateTranslationWithByok } from "~/lib/byok-ai"
+import { isByokEnabled } from "~/lib/byok-settings"
 
 interface UseByokTranslationOptions {
   entryId: string

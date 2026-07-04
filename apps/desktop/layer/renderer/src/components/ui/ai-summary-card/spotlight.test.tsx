@@ -1,3 +1,4 @@
+import { FollowAPIError } from "@follow-app/client-sdk"
 import { Provider } from "jotai"
 import * as React from "react"
 import { act } from "react"
@@ -9,12 +10,14 @@ import { jotaiStore } from "~/lib/jotai"
 
 import { AISummaryCardBase } from "./AISummaryCardBase"
 
-const { markdownMock } = vi.hoisted(() => ({
+const { byokModeEnabledMock, markdownMock, paymentEnabledMock } = vi.hoisted(() => ({
+  byokModeEnabledMock: vi.fn(() => false),
   markdownMock: vi.fn(() => null),
+  paymentEnabledMock: vi.fn(() => false),
 }))
 
 vi.mock("~/atoms/server-configs", () => ({
-  useIsPaymentEnabled: vi.fn(() => false),
+  useIsPaymentEnabled: paymentEnabledMock,
 }))
 
 vi.mock("~/atoms/settings/spotlight", () => ({
@@ -36,6 +39,10 @@ vi.mock("~/components/ui/markdown/Markdown", () => ({
 
 vi.mock("~/hooks/biz/useFeature", () => ({
   useFeature: vi.fn(() => false),
+}))
+
+vi.mock("~/lib/byok-settings", () => ({
+  useIsByokModeEnabled: byokModeEnabledMock,
 }))
 
 vi.mock("~/modules/settings/modal/useSettingModal", () => ({
@@ -104,5 +111,26 @@ describe("AISummaryCardBase spotlight", () => {
       }),
       undefined,
     )
+  })
+
+  test("does not show the upgrade prompt for server quota errors when BYOK is available", async () => {
+    paymentEnabledMock.mockReturnValue(true)
+    byokModeEnabledMock.mockReturnValue(true)
+    ;({ container, root } = await renderSummary(
+      <AISummaryCardBase error={new FollowAPIError("Payment required", 402, "402", {})} />,
+    ))
+
+    expect(container.textContent).not.toContain("ai.summary_upgrade_required_title")
+    expect(container.textContent).toContain("ai.summary_not_available")
+  })
+
+  test("keeps the upgrade prompt for server quota errors when BYOK is unavailable", async () => {
+    paymentEnabledMock.mockReturnValue(true)
+    byokModeEnabledMock.mockReturnValue(false)
+    ;({ container, root } = await renderSummary(
+      <AISummaryCardBase error={new FollowAPIError("Payment required", 402, "402", {})} />,
+    ))
+
+    expect(container.textContent).toContain("ai.summary_upgrade_required_title")
   })
 })

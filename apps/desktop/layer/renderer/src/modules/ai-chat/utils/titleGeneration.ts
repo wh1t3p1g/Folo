@@ -1,5 +1,6 @@
 import { followClient } from "~/lib/api-client"
-import { generateTitleWithByok, isByokEnabled } from "~/lib/byok-ai"
+import { generateTitleWithByok } from "~/lib/byok-ai"
+import { isByokEnabled } from "~/lib/byok-settings"
 
 import { AIPersistService } from "../services"
 import type { SendingUIMessage } from "../store/types"

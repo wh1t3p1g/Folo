@@ -1,4 +1,3 @@
-import { getFeature } from "~/hooks/biz/useFeature"
 import { SettingAI } from "~/modules/settings/tabs/ai"
 import { SettingsTitle } from "~/modules/settings/title"
 import { defineSettingPageData } from "~/modules/settings/utils"
@@ -11,7 +10,6 @@ export const loader = defineSettingPageData({
   icon: iconName,
   name: "titles.ai",
   priority,
-  hideIf: () => !getFeature("ai"),
 })
 
 export function Component() {

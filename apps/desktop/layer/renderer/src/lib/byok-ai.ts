@@ -9,7 +9,7 @@
 
 import type { UserByokProviderConfig } from "@follow/shared/settings/interface"
 
-import { getAISettings } from "~/atoms/settings/ai"
+import { getByokProvider } from "~/lib/byok-settings"
 import { ipcServices } from "~/lib/client"
 
 /**
@@ -73,94 +73,6 @@ export interface ByokTranslationResult {
   description: string | null
   content: string | null
   readabilityContent: string | null
-}
-
-/**
- * Check if BYOK is enabled and has valid provider configuration
- */
-export function isByokEnabled(): boolean {
-  const aiSettings = getAISettings()
-  const { byok } = aiSettings
-  return !!(byok?.enabled && byok.providers?.length > 0)
-}
-
-// /**
-//  * Mask API key for logging (show first 4 and last 4 characters)
-//  */
-// function maskApiKey(key: string | null | undefined): string {
-//   if (!key) return "(empty)"
-//   if (key.length <= 8) return "****"
-//   return `${key.slice(0, 4)}...${key.slice(-4)}`
-// }
-
-const ENCRYPT_PREFIX = "encrypt__"
-
-/**
- * Check if API key is in encrypted format (from server sync)
- * If so, it cannot be used and user needs to re-enter the key
- */
-function isServerEncryptedApiKey(key: string | null | undefined): boolean {
-  if (!key) return false
-  return key.startsWith(ENCRYPT_PREFIX)
-}
-
-/**
- * Process API key - return as-is if plain text, null if encrypted
- * Since BYOK settings are now local-only (not synced to server),
- * new API keys should always be plain text.
- * If we detect an encrypted key, it means the key was synced from server
- * before we disabled sync, and the user needs to re-enter it.
- */
-function processApiKey(key: string | null | undefined): string | null {
-  if (!key) return null
-
-  // console.info("[BYOK] Processing API key:", maskApiKey(key))
-
-  // If the key is in server-encrypted format, it cannot be decrypted client-side
-  // User needs to re-enter the API key
-  if (isServerEncryptedApiKey(key)) {
-    // console.warn(
-    //   "[BYOK] API key is in encrypted format from server sync. " +
-    //     "Please re-enter your API key in Settings > AI > BYOK.",
-    // )
-    return null
-  }
-
-  // Plain text API key - return as-is
-  return key
-}
-
-/**
- * Get the first valid BYOK provider configuration
- * Returns provider with processed API key (null if encrypted)
- */
-export function getByokProvider(): UserByokProviderConfig | null {
-  const aiSettings = getAISettings()
-  const { byok } = aiSettings
-
-  if (!byok?.enabled || !byok.providers?.length) {
-    return null
-  }
-
-  // Find first provider with API key
-  const provider = byok.providers.find((p) => p.apiKey) ?? null
-  if (!provider) {
-    return null
-  }
-
-  // Process the API key - return null if it's in encrypted format
-  const processedApiKey = processApiKey(provider.apiKey)
-
-  // If API key couldn't be processed (encrypted from server), return null
-  if (!processedApiKey) {
-    // console.warn("[BYOK] API key is encrypted and cannot be used. Please re-enter your API key.")
-    return null
-  }
-
-  return {
-    ...provider,
-    apiKey: processedApiKey,
-  }
 }
 
 /**

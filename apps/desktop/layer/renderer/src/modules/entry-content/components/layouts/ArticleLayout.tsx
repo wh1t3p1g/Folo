@@ -7,7 +7,7 @@ import { useIsInbox } from "@follow/store/inbox/hooks"
 import { cn } from "@follow/utils"
 import { useEffect, useMemo, useRef, useState } from "react"
 
-import { AIChatPanelStyle, useAIChatPanelStyle, useAIPanelVisibility } from "~/atoms/settings/ai"
+import { useAIChatPanelStyle, useAIPanelVisibility } from "~/atoms/settings/ai"
 import { useUISettingKey } from "~/atoms/settings/ui"
 import { ErrorBoundary } from "~/components/common/ErrorBoundary"
 import { ShadowDOM } from "~/components/common/ShadowDOM"
@@ -15,6 +15,7 @@ import type { TocRef } from "~/components/ui/markdown/components/Toc"
 import { useInPeekModal } from "~/components/ui/modal/inspire/InPeekModal"
 import { readableContentMaxWidthClassName } from "~/constants/ui"
 import { useRenderStyle } from "~/hooks/biz/useRenderStyle"
+import { useIsByokEnabled } from "~/lib/byok-settings"
 import { EntryContentHTMLRenderer } from "~/modules/renderer/html"
 import { EntryContentMarkdownRenderer } from "~/modules/renderer/markdown"
 import { WrappedElementProvider } from "~/providers/wrapped-element-provider"
@@ -29,6 +30,7 @@ import { EntryTitle } from "../EntryTitle"
 import { getArticleRendererContent } from "./content-selection"
 import { MediaTranscript, TranscriptToggle, useTranscription } from "./shared"
 import { ArticleAudioPlayer } from "./shared/AudioPlayer"
+import { shouldRenderAISummary } from "./summary-visibility"
 import type { EntryLayoutProps } from "./types"
 
 export const ArticleLayout: React.FC<EntryLayoutProps> = ({
@@ -52,8 +54,13 @@ export const ArticleLayout: React.FC<EntryLayoutProps> = ({
 
   const aiChatPanelStyle = useAIChatPanelStyle()
   const isAIPanelVisible = useAIPanelVisibility()
+  const byokEnabled = useIsByokEnabled()
 
-  const shouldShowAISummary = aiChatPanelStyle === AIChatPanelStyle.Floating || !isAIPanelVisible
+  const shouldShowAISummary = shouldRenderAISummary({
+    aiChatPanelStyle,
+    byokEnabled,
+    isAIPanelVisible,
+  })
 
   if (!entry) return null
 

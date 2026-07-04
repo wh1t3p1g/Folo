@@ -1,6 +1,12 @@
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest"
 
 import {
+  clearAISettings,
+  getAISettings,
+  initializeDefaultAISettings,
+  setAISetting,
+} from "~/atoms/settings/ai"
+import {
   getSpotlightSettings,
   initializeDefaultSpotlightSettings,
   setSpotlightSetting,
@@ -54,9 +60,35 @@ const createRule = () => ({
   color: "#FDE68A",
 })
 
+const createLocalStorageMock = (): Storage => {
+  const store = new Map<string, string>()
+
+  return {
+    get length() {
+      return store.size
+    },
+    clear() {
+      store.clear()
+    },
+    getItem(key) {
+      return store.get(key) ?? null
+    },
+    key(index) {
+      return Array.from(store.keys())[index] ?? null
+    },
+    removeItem(key) {
+      store.delete(key)
+    },
+    setItem(key, value) {
+      store.set(key, value)
+    },
+  }
+}
+
 describe("desktop spotlight setting sync", () => {
   beforeEach(() => {
     const eventTarget = new EventTarget()
+    const localStorageMock = createLocalStorageMock()
     Object.defineProperties(window, {
       addEventListener: {
         configurable: true,
@@ -70,6 +102,14 @@ describe("desktop spotlight setting sync", () => {
         configurable: true,
         value: eventTarget.dispatchEvent.bind(eventTarget),
       },
+      localStorage: {
+        configurable: true,
+        value: localStorageMock,
+      },
+    })
+    Object.defineProperty(globalThis, "localStorage", {
+      configurable: true,
+      value: localStorageMock,
     })
 
     whoamiMock.mockReturnValue({ id: "user-1" })
@@ -80,6 +120,8 @@ describe("desktop spotlight setting sync", () => {
       updated: {},
     })
 
+    clearAISettings()
+    initializeDefaultAISettings()
     initializeDefaultUISettings()
     initializeDefaultSpotlightSettings()
     localStorage.clear()
@@ -91,6 +133,8 @@ describe("desktop spotlight setting sync", () => {
     settingSyncQueue.teardown()
     settingSyncQueue.queue = []
     localStorage.clear()
+    clearAISettings()
+    initializeDefaultAISettings()
     initializeDefaultUISettings()
     initializeDefaultSpotlightSettings()
   })
@@ -148,5 +192,55 @@ describe("desktop spotlight setting sync", () => {
         spotlights: [rule],
       }),
     )
+  })
+
+  test("keeps BYOK settings local instead of sending API keys to remote settings", async () => {
+    vi.useFakeTimers()
+
+    await settingSyncQueue.init()
+
+    setAISetting("byok", {
+      enabled: true,
+      providers: [
+        {
+          provider: "openai",
+          apiKey: "sk-local",
+        },
+      ],
+    })
+
+    await vi.advanceTimersByTimeAsync(1000)
+    await Promise.resolve()
+
+    expect(settingsUpdateMock).not.toHaveBeenCalled()
+  })
+
+  test("does not hydrate server-encrypted BYOK settings over the local BYOK config", async () => {
+    settingsPrefetchMock.mockResolvedValue({
+      code: 0,
+      settings: {
+        ai: {
+          byok: {
+            enabled: true,
+            providers: [
+              {
+                provider: "openai",
+                apiKey: "encrypt__stored-on-server",
+              },
+            ],
+          },
+        },
+      },
+      updated: {
+        ai: "2026-04-14T12:00:00.000Z",
+      },
+    })
+
+    await settingSyncQueue.syncLocal()
+
+    expect(getAISettings().byok).toEqual({
+      enabled: false,
+      providers: [],
+    })
   })
 })

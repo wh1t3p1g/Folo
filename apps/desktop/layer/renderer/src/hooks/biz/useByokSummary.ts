@@ -6,12 +6,14 @@
  */
 
 import type { SupportedActionLanguage } from "@follow/shared"
+import { toApiSupportedActionLanguage } from "@follow/shared"
 import { useEntry, usePrefetchEntryDetail } from "@follow/store/entry/hooks"
 import { summaryActions, useSummaryStore } from "@follow/store/summary/store"
 import type { SupportedLanguages } from "@follow-app/client-sdk"
 import { useQuery } from "@tanstack/react-query"
 
-import { generateSummaryWithByok, isByokEnabled } from "~/lib/byok-ai"
+import { generateSummaryWithByok } from "~/lib/byok-ai"
+import { useIsByokEnabled, useIsByokModeEnabled } from "~/lib/byok-settings"
 
 import { followApi } from "../../lib/api-client"
 
@@ -21,6 +23,41 @@ interface UsePrefetchSummaryByokOptions {
   actionLanguage: SupportedLanguages
   enabled?: boolean
 }
+
+type SummaryTarget = UsePrefetchSummaryByokOptions["target"]
+
+interface SummaryContentSource {
+  content?: string | null
+  readabilityContent?: string | null
+}
+
+export const resolveSummarySourceContent = ({
+  target,
+  entryContent,
+  entryDetail,
+}: {
+  target: SummaryTarget
+  entryContent?: SummaryContentSource | null
+  entryDetail?: SummaryContentSource | null
+}) => {
+  const content = entryContent?.content ?? entryDetail?.content ?? null
+  const readabilityContent =
+    entryContent?.readabilityContent ?? entryDetail?.readabilityContent ?? null
+
+  return target === "readabilityContent"
+    ? (readabilityContent ?? content)
+    : (content ?? readabilityContent)
+}
+
+export const shouldEnableSummaryQuery = ({
+  enabled,
+  byokModeEnabled,
+  content,
+}: {
+  enabled: boolean
+  byokModeEnabled: boolean
+  content?: string | null
+}) => enabled && (!!content || !byokModeEnabled)
 
 /**
  * Custom usePrefetchSummary hook that supports BYOK
@@ -48,15 +85,16 @@ export function usePrefetchSummaryByok({
   const { data: entryDetail } = usePrefetchEntryDetail(entryId)
 
   // The actual content to use for summary
-  const content =
-    target === "readabilityContent"
-      ? entryContent?.readabilityContent
-      : (entryContent?.content ?? entryDetail?.content)
+  const content = resolveSummarySourceContent({
+    target,
+    entryContent,
+    entryDetail,
+  })
 
   // Only enable query when we have content (for BYOK) or always for server API
-  const byokEnabled = isByokEnabled()
-  const hasContent = !!content
-  const shouldEnable = enabled && (hasContent || !byokEnabled)
+  const byokModeEnabled = useIsByokModeEnabled()
+  const byokEnabled = useIsByokEnabled()
+  const shouldEnable = shouldEnableSummaryQuery({ enabled, byokModeEnabled, content })
 
   // // Debug logging
   // console.log("[BYOK Summary Debug]", {
@@ -73,7 +111,7 @@ export function usePrefetchSummaryByok({
   // })
 
   return useQuery({
-    queryKey: ["summary", entryId, target, actionLanguage, "byok", byokEnabled],
+    queryKey: ["summary", entryId, target, actionLanguage, "byok", byokModeEnabled, byokEnabled],
     queryFn: async () => {
       // console.log("[BYOK Summary] queryFn called", {
       //   entryId,
@@ -96,7 +134,7 @@ export function usePrefetchSummaryByok({
       }
 
       // Check if BYOK is enabled
-      if (byokEnabled) {
+      if (byokModeEnabled) {
         // console.log("[BYOK Summary] Using BYOK mode")
         // Use BYOK to generate summary
         if (!content) {
@@ -105,10 +143,14 @@ export function usePrefetchSummaryByok({
           throw new Error("No content available for summary")
         }
 
+        if (!byokEnabled) {
+          throw new Error("BYOK is enabled but no usable local API key is configured")
+        }
+
         const summary = await generateSummaryWithByok({
           content,
           language: actionLanguage,
-          title: entryContent?.title ?? undefined,
+          title: entryContent?.title ?? entryDetail?.title ?? undefined,
         })
 
         if (summary) {
@@ -129,7 +171,7 @@ export function usePrefetchSummaryByok({
         // Fallback to server API
         const result = await followApi.ai.summary({
           id: entryId,
-          language: storeLanguage,
+          language: toApiSupportedActionLanguage(storeLanguage),
           target,
         })
         // console.log("[BYOK Summary] Server API result:", { data: result.data?.substring(0, 50) })
