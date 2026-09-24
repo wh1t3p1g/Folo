@@ -27,23 +27,34 @@ import { useFeature } from "~/hooks/biz/useFeature"
 import { useRouteParams } from "~/hooks/biz/useRouteParams"
 
 import { aiTimelineEnabledAtom } from "../atoms/ai-timeline"
+import { getEffectiveRouteEntrySortOrder } from "./entry-sort-order"
 import { getVisibleLocalEntryIds } from "./filter-local-entry-ids"
 import { useIsPreviewFeed } from "./useIsPreviewFeed"
 
 const useRemoteEntries = (): UseEntriesReturn => {
-  const { feedId, view, inboxId, listId } = useRouteParams()
+  const { feedId, view, inboxId, listId, isCollection } = useRouteParams()
   const isPreview = useIsPreviewFeed()
 
   const unreadOnly = useGeneralSettingKey("unreadOnly")
   const hidePrivateSubscriptionsInTimeline = useGeneralSettingKey(
     "hidePrivateSubscriptionsInTimeline",
   )
+  const savedSortOrder = useGeneralSettingKey("timelineSortOrder")
   const aiTimelineEnabled = useAtomValue(aiTimelineEnabledAtom)
   const aiEnabled = useFeature("ai")
 
   const folderIds = useFolderFeedsByFeedId({
     feedId,
     view,
+  })
+  const effectiveUnreadOnly = unreadOnly === true && !isPreview
+  const effectiveSortOrder = getEffectiveRouteEntrySortOrder({
+    sortOrder: savedSortOrder,
+    unreadOnly: effectiveUnreadOnly,
+    feedId,
+    inboxId,
+    isCollection,
+    isPreview,
   })
 
   const entriesOptions = useMemo(() => {
@@ -52,12 +63,13 @@ const useRemoteEntries = (): UseEntriesReturn => {
       inboxId,
       listId,
       view,
-      ...(unreadOnly === true && !isPreview && { unreadOnly: true }),
+      ...(effectiveUnreadOnly && { unreadOnly: true }),
       ...(hidePrivateSubscriptionsInTimeline === true && {
         hidePrivateSubscriptionsInTimeline: true,
       }),
       ...(view === FeedViewType.All && { limit: 40 }),
-      ...(aiTimelineEnabled && aiEnabled && { aiSort: true }),
+      ...(aiTimelineEnabled && aiEnabled && effectiveSortOrder === "desc" && { aiSort: true }),
+      sortOrder: effectiveSortOrder,
     }
 
     if (feedId && listId && isBizId(feedId)) {
@@ -70,12 +82,12 @@ const useRemoteEntries = (): UseEntriesReturn => {
     folderIds,
     inboxId,
     listId,
-    unreadOnly,
-    isPreview,
+    effectiveUnreadOnly,
     view,
     hidePrivateSubscriptionsInTimeline,
     aiTimelineEnabled,
     aiEnabled,
+    effectiveSortOrder,
   ])
   const query = useEntriesQuery(entriesOptions)
 
@@ -116,10 +128,21 @@ function getEntryIdsFromMultiplePlace(...entryIds: Array<string[] | undefined | 
 
 const useLocalEntries = (): UseEntriesReturn => {
   const { feedId, view, inboxId, listId, isCollection } = useRouteParams()
+  const isPreview = useIsPreviewFeed()
   const unreadOnly = useGeneralSettingKey("unreadOnly")
   const hidePrivateSubscriptionsInTimeline = useGeneralSettingKey(
     "hidePrivateSubscriptionsInTimeline",
   )
+  const savedSortOrder = useGeneralSettingKey("timelineSortOrder")
+  const effectiveUnreadOnly = unreadOnly && !isPreview
+  const effectiveSortOrder = getEffectiveRouteEntrySortOrder({
+    sortOrder: savedSortOrder,
+    unreadOnly: effectiveUnreadOnly,
+    feedId,
+    inboxId,
+    isCollection,
+    isPreview,
+  })
 
   const folderIds = useFolderFeedsByFeedId({
     feedId,
@@ -140,8 +163,16 @@ const useLocalEntries = (): UseEntriesReturn => {
     !listId
 
   const localQueryKey = useMemo(
-    () => [feedId || "", view, inboxId || "", listId || "", isCollection ? "1" : "0"].join(":"),
-    [feedId, inboxId, isCollection, listId, view],
+    () =>
+      [
+        feedId || "",
+        view,
+        inboxId || "",
+        listId || "",
+        isCollection ? "1" : "0",
+        effectiveSortOrder,
+      ].join(":"),
+    [effectiveSortOrder, feedId, inboxId, isCollection, listId, view],
   )
   const stickyVisibleStateRef = useRef<{
     queryKey: string
@@ -166,15 +197,15 @@ const useLocalEntries = (): UseEntriesReturn => {
               ) ?? [])
 
         const stickyVisibleIds =
-          unreadOnly && stickyVisibleStateRef.current.queryKey === localQueryKey
+          effectiveUnreadOnly && stickyVisibleStateRef.current.queryKey === localQueryKey
             ? stickyVisibleStateRef.current.ids
             : undefined
 
         return getVisibleLocalEntryIds({
-          sourceIds: ids,
+          sourceIds: effectiveSortOrder === "asc" ? [...ids].reverse() : ids,
           entries: state.data,
           stickyVisibleIds,
-          unreadOnly,
+          unreadOnly: effectiveUnreadOnly,
         })
       },
       [
@@ -187,7 +218,8 @@ const useLocalEntries = (): UseEntriesReturn => {
         isCollection,
         localQueryKey,
         showEntriesByView,
-        unreadOnly,
+        effectiveSortOrder,
+        effectiveUnreadOnly,
       ],
     ),
   )
@@ -195,9 +227,9 @@ const useLocalEntries = (): UseEntriesReturn => {
   useEffect(() => {
     stickyVisibleStateRef.current = {
       queryKey: localQueryKey,
-      ids: unreadOnly ? new Set(allEntries) : new Set<string>(),
+      ids: effectiveUnreadOnly ? new Set(allEntries) : new Set<string>(),
     }
-  }, [allEntries, localQueryKey, unreadOnly])
+  }, [allEntries, effectiveUnreadOnly, localQueryKey])
 
   const [page, setPage] = useState(0)
   const pageSize = 30
@@ -227,7 +259,7 @@ const useLocalEntries = (): UseEntriesReturn => {
 
   useEffect(() => {
     setPage(0)
-  }, [view, feedId])
+  }, [view, feedId, effectiveSortOrder, effectiveUnreadOnly])
 
   return {
     entriesIds: entries,
@@ -311,7 +343,7 @@ export const useEntriesByView = ({ onReset }: { onReset?: () => void }) => {
     type: remoteQuery.isReady ? ("remote" as const) : ("local" as const),
     refetch: useCallback(() => {
       const promise = query.refetch()
-      unreadSyncService.resetFromRemote()
+      void unreadSyncService.refresh({ calibrate: true })
       return promise
     }, [query]),
     entriesIds: entryIds,

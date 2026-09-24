@@ -5,6 +5,8 @@ import {
   pickSpotlightPayloadFromRemoteAppearance,
   toAppearanceSpotlightPayload,
 } from "@follow/shared/spotlight"
+import { registerSyncModel } from "@follow/store/sync/model-registry"
+import type { SyncAction } from "@follow/store/sync/types"
 import { whoami } from "@follow/store/user/getters"
 import { tracker } from "@follow/tracker"
 import { EventBus } from "@follow/utils/event-bus"
@@ -28,6 +30,7 @@ import {
 import { __uiSettingAtom, getUISettings, uiServerSyncWhiteListKeys } from "~/atoms/settings/ui"
 import { followClient } from "~/lib/api-client"
 import { jotaiStore } from "~/lib/jotai"
+import { queryClient } from "~/lib/query-client"
 import { settings } from "~/queries/settings"
 
 type SettingMapping = {
@@ -38,6 +41,11 @@ type SettingMapping = {
 }
 type SettingDomain = keyof SettingMapping
 type RemoteSettingsTab = "appearance" | "general" | "ai"
+export interface RemoteSettingsResponse {
+  code: 0
+  settings: Record<string, any>
+  updated: Record<string, string>
+}
 
 const pickSyncPayload = <T extends object>(payload: T, keys: readonly (keyof T | string)[]) => {
   const nextPayload = {} as Partial<T>
@@ -337,22 +345,19 @@ class SettingSyncQueue {
   private threshold = 1000
   private flushScheduled = false
 
-  private pendingPromise: Promise<{
-    code: 0
-    settings: Record<string, any>
-    updated: Record<string, string>
-  }> | null = null
+  private pendingPromise: Promise<RemoteSettingsResponse> | null = null
 
   private fetchSettingRemote() {
     if (this.pendingPromise) {
       return this.pendingPromise
     }
 
-    const promise = settings.get().prefetch() as Promise<{
-      code: 0
-      settings: Record<string, any>
-      updated: Record<string, string>
-    }>
+    const settingQuery = settings.get()
+    const promise = queryClient.fetchQuery({
+      queryKey: settingQuery.key,
+      queryFn: settingQuery.fn,
+      staleTime: 0,
+    }) as Promise<RemoteSettingsResponse>
 
     this.pendingPromise = promise.finally(() => {
       this.pendingPromise = null
@@ -368,6 +373,10 @@ class SettingSyncQueue {
     return remoteAppearancePayload && typeof remoteAppearancePayload === "object"
       ? { ...(remoteAppearancePayload as Record<string, unknown>) }
       : {}
+  }
+
+  private async fetchFreshRemoteSettings() {
+    return followClient.api.settings.get() as Promise<RemoteSettingsResponse>
   }
 
   async enqueue<T extends SettingSyncTab>(tab: T, payload: Partial<SettingMapping[T]>) {
@@ -500,6 +509,23 @@ class SettingSyncQueue {
     }
   }
 
+  private replaceAllRemote() {
+    return Promise.all([
+      followClient.api.settings.update({
+        tab: "appearance",
+        ...buildFullLocalAppearancePayload(),
+      }),
+      followClient.api.settings.update({
+        tab: "general",
+        ...getLocalPayloadForRemoteTab("general"),
+      }),
+      followClient.api.settings.update({
+        tab: "ai",
+        ...getLocalPayloadForRemoteTab("ai"),
+      }),
+    ])
+  }
+
   replaceRemote(tab?: SettingSyncTab) {
     const currentUserId = this.getCurrentUserId()
     if (!currentUserId) {
@@ -509,22 +535,7 @@ class SettingSyncQueue {
     this.bindQueueOwner(currentUserId)
 
     if (!tab) {
-      const promises = [
-        followClient.api.settings.update({
-          tab: "appearance",
-          ...buildFullLocalAppearancePayload(),
-        }),
-        followClient.api.settings.update({
-          tab: "general",
-          ...getLocalPayloadForRemoteTab("general"),
-        }),
-        followClient.api.settings.update({
-          tab: "ai",
-          ...getLocalPayloadForRemoteTab("ai"),
-        }),
-      ]
-
-      this.chain = this.chain.finally(() => Promise.all(promises))
+      this.chain = this.chain.finally(() => this.replaceAllRemote())
       return this.chain
     } else {
       this.chain = this.chain.finally(async () => {
@@ -547,25 +558,37 @@ class SettingSyncQueue {
     }
   }
 
-  async syncLocal() {
+  replaceRemoteIfEmpty() {
     const currentUserId = this.getCurrentUserId()
-    if (!currentUserId) return
+    if (!currentUserId) {
+      return this.chain
+    }
 
     this.bindQueueOwner(currentUserId)
 
-    const remoteSettings = await this.fetchSettingRemote().catch((error) => {
-      if (isUnauthorizedError(error)) {
-        this.queue = []
-        this.ownerUserId = currentUserId
-        return null
-      }
+    this.chain = this.chain.finally(async () => {
+      try {
+        const remoteSettings = await this.fetchFreshRemoteSettings()
+        if (!isEmptyObject(remoteSettings.settings)) {
+          return
+        }
 
-      this.reportSyncError("syncLocal", error)
-      return null
+        await this.replaceAllRemote()
+      } catch (error) {
+        if (isUnauthorizedError(error)) {
+          this.queue = []
+          this.ownerUserId = currentUserId
+          return
+        }
+
+        this.reportSyncError("flush", error)
+      }
     })
 
-    if (!remoteSettings) return
+    return this.chain
+  }
 
+  applyRemoteSettings(remoteSettings: RemoteSettingsResponse) {
     if (isEmptyObject(remoteSettings.settings)) return
 
     for (const tab in remoteSettings.settings) {
@@ -597,6 +620,79 @@ class SettingSyncQueue {
       }
     }
   }
+
+  /**
+   * One settings tab changed on the server, reported by the sync engine's change log. The
+   * action carries what `GET /settings` would return for that tab, so it goes through the
+   * same last-writer-wins merge as a full sync.
+   */
+  async applyRemoteChange(action: SyncAction) {
+    if (action.action !== "U" || !action.modelId) return
+    const tab = action.modelId as RemoteSettingsTab
+    const data = action.data as { payload?: Record<string, unknown>; updatedAt?: string } | null
+    if (!data?.updatedAt) return
+
+    // A local change to this tab is still waiting to be sent. It wins for now, and the
+    // server's answer to it is logged with both changes merged.
+    if (this.queue.some((item) => remoteTabMap[item.tab] === tab)) return
+
+    if (!data.payload) {
+      // Tabs that hold credentials are logged without their payload: read them the usual way.
+      await this.syncLocal()
+      return
+    }
+
+    const { payload, updatedAt } = data
+    this.applyRemoteSettings({
+      code: 0,
+      settings: { [tab]: payload },
+      updated: { [tab]: updatedAt },
+    })
+    // Keep the cached `/settings` response in step for the settings dialog.
+    queryClient.setQueryData<RemoteSettingsResponse>(settings.get().key, (current) =>
+      current
+        ? {
+            ...current,
+            settings: { ...current.settings, [tab]: payload },
+            updated: { ...current.updated, [tab]: updatedAt },
+          }
+        : current,
+    )
+  }
+
+  /**
+   * @param rethrow let a failed request reach the caller. The sync engine needs it: a load
+   * that did not happen must not count as done.
+   */
+  async syncLocal(options?: { rethrow?: boolean }) {
+    const currentUserId = this.getCurrentUserId()
+    if (!currentUserId) return
+
+    this.bindQueueOwner(currentUserId)
+
+    const remoteSettings = await this.fetchSettingRemote().catch((error) => {
+      if (isUnauthorizedError(error)) {
+        this.queue = []
+        this.ownerUserId = currentUserId
+        return null
+      }
+
+      this.reportSyncError("syncLocal", error)
+      if (options?.rethrow) throw error
+      return null
+    })
+
+    if (!remoteSettings) return
+
+    this.applyRemoteSettings(remoteSettings)
+  }
 }
 
 export const settingSyncQueue = new SettingSyncQueue()
+
+// Registered at module load, before the sync engine starts: once the settings were loaded in
+// full, launches no longer request them and other devices' changes arrive through the log.
+registerSyncModel("setting", {
+  bootstrap: () => settingSyncQueue.syncLocal({ rethrow: true }),
+  apply: (action) => settingSyncQueue.applyRemoteChange(action),
+})

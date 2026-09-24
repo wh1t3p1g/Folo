@@ -43,6 +43,7 @@ export function EntryContentHTMLRenderer<AS extends keyof JSX.IntrinsicElements 
     return {
       images,
       url,
+      coverImageUrl: state.media?.[0]?.type === "photo" ? state.media[0].url : undefined,
     }
   })
 
@@ -68,12 +69,16 @@ export function EntryContentHTMLRenderer<AS extends keyof JSX.IntrinsicElements 
     }
   }, [entry, feedId, onImageContextMenu, view])
   return (
-    // eslint-disable-next-line @eslint-react/no-context-provider
     <MarkdownImageRecordContext.Provider value={images}>
       <MarkdownRenderActionContext value={actions}>
         <EntryInfoContext value={useMemo(() => ({ feedId, entryId }), [feedId, entryId])}>
           {/*  @ts-expect-error */}
-          <HTML {...props} spotlightRules={spotlightRules}>
+          <HTML
+            {...props}
+            spotlightRules={spotlightRules}
+            coverImageUrl={entry?.coverImageUrl}
+            baseUrl={entry?.url ?? undefined}
+          >
             {children}
           </HTML>
         </EntryInfoContext>

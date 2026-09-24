@@ -1,6 +1,8 @@
 import { dirname, resolve } from "pathe"
 import { defineConfig } from "tsdown"
 
+import { harfbuzzWorkerPlugin } from "./scripts/harfbuzz-worker-plugin.ts"
+
 const __dirname = dirname(import.meta.url.replace("file://", ""))
 
 export default defineConfig({
@@ -9,11 +11,14 @@ export default defineConfig({
 
   clean: true,
   format: ["esm"],
-  external: ["node:*", /\.wasm$/],
-  noExternal: ["**"],
-  inlineOnly: false,
+  deps: {
+    neverBundle: ["node:*", /\.wasm$/],
+    alwaysBundle: ["**"],
+    onlyBundle: false,
+  },
   treeshake: true,
   splitting: false,
+  plugins: [harfbuzzWorkerPlugin()],
 
   alias: {
     "./src/lib/og/render-to-image": "./src/lib/og/render-to-image.worker",

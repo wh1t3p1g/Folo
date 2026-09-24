@@ -113,7 +113,7 @@ export const AIChainOfThought: React.FC<AIChainOfThoughtProps> = React.memo(
               <div aria-hidden className="absolute inset-y-2 left-2 border-l border-fill" />
               {groups.map((part, index) => {
                 const innerCollapseId = `${collapseId}-${index}`
-                if (isStaticToolUIPart(part)) {
+                if (isToolUIPart(part)) {
                   return (
                     <ToolInvocationComponent variant="loose" key={innerCollapseId} part={part} />
                   )

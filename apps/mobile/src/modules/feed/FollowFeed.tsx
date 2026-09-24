@@ -28,6 +28,7 @@ import { Text } from "@/src/components/ui/typography/Text"
 import { SafeAlertCuteReIcon } from "@/src/icons/safe_alert_cute_re"
 import { SafetyCertificateCuteReIcon } from "@/src/icons/safety_certificate_cute_re"
 import { User3CuteReIcon } from "@/src/icons/user_3_cute_re"
+import { sanitizeErrorMessage } from "@/src/lib/error-message"
 import { toastFetchError } from "@/src/lib/error-parser"
 import { useCanDismiss, useNavigation } from "@/src/lib/navigation/hooks"
 import { useSetModalScreenOptions } from "@/src/lib/navigation/ScreenOptionsContext"
@@ -43,6 +44,8 @@ const formSchema = z.object({
   hideFromTimeline: z.boolean().optional(),
   title: z.string().optional(),
 })
+type FollowFeedFormInput = z.input<typeof formSchema>
+type FollowFeedFormOutput = z.output<typeof formSchema>
 export function FollowFeed(props: { id: string }) {
   const { id } = props
   const feed = useFeedById(id as string)
@@ -67,7 +70,7 @@ export function FollowUrl(props: { url: string }) {
     )
   }
   if (!data) {
-    return <Text className="text-label">{error?.message}</Text>
+    return <Text className="text-label">{sanitizeErrorMessage(error?.message ?? "")}</Text>
   }
   return (
     <FollowImpl
@@ -93,7 +96,7 @@ function FollowImpl(props: { feedId: string; defaultView?: FeedViewType }) {
       view: subscription?.view ?? defaultView,
     }
   }, [subscription, defaultView])
-  const form = useForm<z.infer<typeof formSchema>>({
+  const form = useForm<FollowFeedFormInput, any, FollowFeedFormOutput>({
     resolver: zodResolver(formSchema),
     defaultValues: defaultFormValues,
   })
@@ -105,10 +108,9 @@ function FollowImpl(props: { feedId: string; defaultView?: FeedViewType }) {
   const [isLoading, setIsLoading] = useState(false)
   const navigate = useNavigation()
   const canDismiss = useCanDismiss()
-  const submit = async () => {
+  const submit = async (values: FollowFeedFormOutput) => {
     if (isLoading) return
     setIsLoading(true)
-    const values = form.getValues()
     const body: SubscriptionForm = {
       url: feed?.url,
       view: values.view,
@@ -331,7 +333,7 @@ function FollowImpl(props: { feedId: string; defaultView?: FeedViewType }) {
               name="view"
               control={form.control}
               render={({ field: { onChange, value } }) => (
-                <FeedViewSelector value={value} onChange={onChange} />
+                <FeedViewSelector value={value as FeedViewType} onChange={onChange} />
               )}
             />
           </View>

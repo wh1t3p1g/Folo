@@ -2,7 +2,9 @@ pnpm-lock.yaml
 
 CHANGELOG.md
 .context
+.claude/worktrees
 .waylog
+.vinext
 
 apps/external/postcss.config.cjs
 

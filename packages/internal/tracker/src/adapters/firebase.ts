@@ -1,18 +1,19 @@
-import type { FirebaseAnalyticsTypes } from "@react-native-firebase/analytics"
-
 import { TrackerMapper } from "../enums"
 import type { IdentifyPayload, TrackerAdapter, TrackPayload } from "./base"
 
+export interface FirebaseTracker {
+  logEvent: (name: string, properties?: Record<string, unknown>) => void | Promise<void>
+  setUserId: (id: string | null) => Promise<void>
+  setUserProperties: (properties: Record<string, string | null>) => Promise<void>
+}
+
 export interface FirebaseAdapterConfig {
-  instance: Pick<FirebaseAnalyticsTypes.Module, "logEvent" | "setUserId" | "setUserProperties">
+  instance: FirebaseTracker
   enabled?: boolean
 }
 
 export class FirebaseAdapter implements TrackerAdapter {
-  private firebaseInstance: Pick<
-    FirebaseAnalyticsTypes.Module,
-    "logEvent" | "setUserId" | "setUserProperties"
-  >
+  private firebaseInstance: FirebaseTracker
   private enabled: boolean
 
   constructor(config: FirebaseAdapterConfig) {
@@ -29,12 +30,16 @@ export class FirebaseAdapter implements TrackerAdapter {
 
     try {
       // Handle special Firebase events based on the original event code
-      const code = (properties as any)?.__code as TrackerMapper
+      const code = properties?.__code as TrackerMapper | undefined
+      const internalEventName = properties?.__eventName as string | undefined
+      const firebaseProperties = properties ? { ...properties } : undefined
+      delete firebaseProperties?.__code
+      delete firebaseProperties?.__eventName
 
       if (code !== undefined) {
-        await this.handleSpecialEvents(code, properties)
+        await this.handleSpecialEvents(code, firebaseProperties, internalEventName)
       } else {
-        await this.firebaseInstance.logEvent(eventName, properties)
+        await this.firebaseInstance.logEvent(eventName, firebaseProperties)
       }
     } catch (error) {
       console.error(`[Firebase] Failed to track event "${eventName}":`, error)
@@ -44,6 +49,7 @@ export class FirebaseAdapter implements TrackerAdapter {
   private async handleSpecialEvents(
     code: TrackerMapper,
     properties?: Record<string, unknown>,
+    internalEventName?: string,
   ): Promise<void> {
     switch (code) {
       case TrackerMapper.Identify: {
@@ -99,8 +105,7 @@ export class FirebaseAdapter implements TrackerAdapter {
       }
       default: {
         // For other events, use the event name directly
-        const eventName = (properties?.__eventName as string) || "unknown_event"
-        await this.firebaseInstance.logEvent(eventName, properties)
+        await this.firebaseInstance.logEvent(internalEventName || "unknown_event", properties)
       }
     }
   }

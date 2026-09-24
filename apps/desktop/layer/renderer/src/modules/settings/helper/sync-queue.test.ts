@@ -1,3 +1,6 @@
+import { getSyncModelHandler } from "@follow/store/sync/model-registry"
+import type { SyncAction } from "@follow/store/sync/types"
+import { FollowAPIError } from "@follow-app/client-sdk"
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest"
 
 import {
@@ -7,19 +10,28 @@ import {
   setAISetting,
 } from "~/atoms/settings/ai"
 import {
+  getGeneralSettings,
+  initializeDefaultGeneralSettings,
+  setGeneralSetting,
+} from "~/atoms/settings/general"
+import {
   getSpotlightSettings,
   initializeDefaultSpotlightSettings,
   setSpotlightSetting,
 } from "~/atoms/settings/spotlight"
 import { initializeDefaultUISettings } from "~/atoms/settings/ui"
+import { queryClient } from "~/lib/query-client"
 
 import { settingSyncQueue } from "./sync-queue"
 
-const { settingsPrefetchMock, settingsUpdateMock, whoamiMock } = vi.hoisted(() => ({
-  settingsPrefetchMock: vi.fn(),
-  settingsUpdateMock: vi.fn(),
-  whoamiMock: vi.fn(),
-}))
+const { settingsGetMock, settingsPrefetchMock, settingsUpdateMock, whoamiMock } = vi.hoisted(
+  () => ({
+    settingsGetMock: vi.fn(),
+    settingsPrefetchMock: vi.fn(),
+    settingsUpdateMock: vi.fn(),
+    whoamiMock: vi.fn(),
+  }),
+)
 
 vi.mock("@follow/store/user/getters", () => ({
   whoami: whoamiMock,
@@ -37,6 +49,7 @@ vi.mock("~/lib/api-client", () => ({
   followClient: {
     api: {
       settings: {
+        get: settingsGetMock,
         update: settingsUpdateMock,
       },
     },
@@ -46,7 +59,8 @@ vi.mock("~/lib/api-client", () => ({
 vi.mock("~/queries/settings", () => ({
   settings: {
     get: () => ({
-      prefetch: settingsPrefetchMock,
+      key: ["settings"],
+      fn: settingsPrefetchMock,
     }),
   },
 }))
@@ -119,10 +133,16 @@ describe("desktop spotlight setting sync", () => {
       settings: {},
       updated: {},
     })
+    settingsGetMock.mockResolvedValue({
+      code: 0,
+      settings: {},
+      updated: {},
+    })
 
     clearAISettings()
     initializeDefaultAISettings()
     initializeDefaultUISettings()
+    initializeDefaultGeneralSettings()
     initializeDefaultSpotlightSettings()
     localStorage.clear()
   })
@@ -136,7 +156,115 @@ describe("desktop spotlight setting sync", () => {
     clearAISettings()
     initializeDefaultAISettings()
     initializeDefaultUISettings()
+    initializeDefaultGeneralSettings()
     initializeDefaultSpotlightSettings()
+  })
+
+  const settingAction = (tab: string, data: unknown): SyncAction => ({
+    id: 1,
+    model: "setting",
+    modelId: tab,
+    action: "U",
+    data,
+    createdAt: "2030-04-14T12:00:00.000Z",
+  })
+
+  test("the sync engine loads settings in full once and then applies logged tabs without a request", async () => {
+    const handler = getSyncModelHandler("setting")!
+    setGeneralSetting("language", "ja")
+    queryClient.setQueryData(["settings"], { code: 0, settings: {}, updated: {} })
+
+    await handler.apply(
+      settingAction("general", {
+        payload: { language: "en" },
+        updatedAt: "2030-04-14T12:00:00.000Z",
+      }),
+    )
+
+    expect(getGeneralSettings()).toMatchObject({
+      language: "en",
+      updated: Date.parse("2030-04-14T12:00:00.000Z"),
+    })
+    expect(settingsPrefetchMock).not.toHaveBeenCalled()
+    // The cached `/settings` answer follows, for the settings dialog.
+    expect(queryClient.getQueryData(["settings"])).toMatchObject({
+      settings: { general: { language: "en" } },
+      updated: { general: "2030-04-14T12:00:00.000Z" },
+    })
+
+    settingsPrefetchMock.mockResolvedValue({
+      code: 0,
+      settings: { general: { language: "fr" } },
+      updated: { general: "2031-01-01T00:00:00.000Z" },
+    })
+    await handler.bootstrap?.()
+    expect(settingsPrefetchMock).toHaveBeenCalledTimes(1)
+    expect(getGeneralSettings()).toMatchObject({ language: "fr" })
+
+    queryClient.removeQueries({ queryKey: ["settings"] })
+  })
+
+  test("a logged tab does not override a local change that is still waiting to be sent", async () => {
+    const handler = getSyncModelHandler("setting")!
+    setGeneralSetting("language", "ja")
+    settingSyncQueue.queue.push({ tab: "general", payload: { language: "ja" }, date: Date.now() })
+
+    await handler.apply(
+      settingAction("general", {
+        payload: { language: "en" },
+        updatedAt: "2030-04-14T12:00:00.000Z",
+      }),
+    )
+
+    expect(getGeneralSettings()).toMatchObject({ language: "ja" })
+  })
+
+  test("a settings load that failed is reported to the sync engine instead of counting as done", async () => {
+    const handler = getSyncModelHandler("setting")!
+    // A status the query client does not retry, so the test does not wait for back-off.
+    settingsPrefetchMock.mockRejectedValue(new FollowAPIError("unprocessable", 422))
+
+    await expect(handler.bootstrap?.()).rejects.toThrow("unprocessable")
+    // The launch path keeps swallowing the error, as before.
+    await expect(settingSyncQueue.syncLocal()).resolves.toBeUndefined()
+    queryClient.removeQueries({ queryKey: ["settings"] })
+  })
+
+  test("a tab logged without its payload is read through the settings endpoint", async () => {
+    const handler = getSyncModelHandler("setting")!
+    settingsPrefetchMock.mockResolvedValue({
+      code: 0,
+      settings: { general: { language: "de" } },
+      updated: { general: "2030-05-01T00:00:00.000Z" },
+    })
+
+    await handler.apply(settingAction("ai", { updatedAt: "2030-05-01T00:00:00.000Z" }))
+
+    expect(settingsPrefetchMock).toHaveBeenCalledTimes(1)
+    expect(getGeneralSettings()).toMatchObject({ language: "de" })
+    queryClient.removeQueries({ queryKey: ["settings"] })
+  })
+
+  test("applyRemoteSettings hydrates general settings from provided payload", () => {
+    setGeneralSetting("language", "ja")
+
+    settingSyncQueue.applyRemoteSettings({
+      code: 0,
+      settings: {
+        general: {
+          language: "en",
+        },
+      },
+      updated: {
+        general: "2030-04-14T12:00:00.000Z",
+      },
+    })
+
+    expect(getGeneralSettings()).toMatchObject({
+      language: "en",
+      updated: Date.parse("2030-04-14T12:00:00.000Z"),
+    })
+    expect(settingsPrefetchMock).not.toHaveBeenCalled()
   })
 
   test("syncLocal hydrates spotlight rules from remote appearance settings", async () => {
@@ -242,5 +370,23 @@ describe("desktop spotlight setting sync", () => {
       enabled: false,
       providers: [],
     })
+  })
+
+  test("replaceRemoteIfEmpty does not overwrite existing remote settings", async () => {
+    settingsGetMock.mockResolvedValue({
+      code: 0,
+      settings: {
+        general: {
+          language: "ja",
+        },
+      },
+      updated: {
+        general: "2026-04-14T12:00:00.000Z",
+      },
+    })
+
+    await settingSyncQueue.replaceRemoteIfEmpty()
+
+    expect(settingsUpdateMock).not.toHaveBeenCalled()
   })
 })

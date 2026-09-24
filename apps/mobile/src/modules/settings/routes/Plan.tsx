@@ -4,7 +4,7 @@ import { cn } from "@follow/utils"
 import type { StatusConfigs } from "@follow-app/client-sdk"
 import { useMutation, useQuery } from "@tanstack/react-query"
 import dayjs from "dayjs"
-import type { SubscriptionProduct } from "expo-iap"
+import type { ProductSubscription } from "expo-iap"
 import { openURL } from "expo-linking"
 import type { TFunction } from "i18next"
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
@@ -76,6 +76,7 @@ const PLAN_FEATURE_ORDER: Array<keyof PaymentFeature> = [
 ]
 
 const BILLING_SEGMENTS: BillingPeriod[] = ["monthly", "yearly"]
+const ACTIVE_STRIPE_SUBSCRIPTION_EXISTS_ERROR_CODE = "ACTIVE_STRIPE_SUBSCRIPTION_EXISTS"
 
 type SegmentLayout = {
   width: number
@@ -108,6 +109,14 @@ type ActiveSubscription = {
   periodEnd: string | null
   trialEnd: string | null
   canManage: boolean
+}
+
+type BillingPortalResponse = {
+  code: number
+  data?: {
+    url: string
+  }
+  message?: string
 }
 
 const currencyFormatter = (() => {
@@ -333,8 +342,8 @@ export const PlanScreen: NavigationControllerView = () => {
   )
   const appleProductsById = useMemo(
     () =>
-      new Map<string, SubscriptionProduct>(
-        appleSubscriptions.map((product: SubscriptionProduct) => [product.id, product]),
+      new Map<string, ProductSubscription>(
+        appleSubscriptions.map((product: ProductSubscription) => [product.id, product]),
       ),
     [appleSubscriptions],
   )
@@ -425,6 +434,25 @@ export const PlanScreen: NavigationControllerView = () => {
     return Math.round(total / paidPlans.length)
   }, [sortedPlans])
 
+  const openStripeBillingPortal = useCallback(async () => {
+    const data = await followClient.request<BillingPortalResponse>("/billing/portal", {
+      method: "POST",
+      body: { returnUrl: proxyEnv.WEB_URL },
+    })
+    if (data.code !== 0 || !data.data?.url) {
+      throw new Error(data.message || t("subscription.actions.manage_error"))
+    }
+
+    await openURL(data.data.url)
+  }, [t])
+
+  const billingPortalMutation = useMutation({
+    mutationFn: openStripeBillingPortal,
+    onError: () => {
+      toast.error(t("subscription.actions.manage_error"))
+    },
+  })
+
   const upgradeMutation = useMutation<void, Error, UpgradeVariables>({
     mutationFn: async ({ planId, annual }) => {
       const selectedPlan = plans.find((plan: PaymentPlan) => plan.planID === planId)
@@ -452,6 +480,13 @@ export const PlanScreen: NavigationControllerView = () => {
         cancelUrl: proxyEnv.WEB_URL,
         disableRedirect: true,
       })
+      if (response.error?.code === ACTIVE_STRIPE_SUBSCRIPTION_EXISTS_ERROR_CODE) {
+        await openStripeBillingPortal()
+        return
+      }
+      if (response.error) {
+        throw new Error(response.error.message)
+      }
 
       const redirectUrl =
         typeof response === "object" && response && "data" in response && response.data
@@ -465,24 +500,6 @@ export const PlanScreen: NavigationControllerView = () => {
     onError: (error) => {
       const message = error.message?.trim() || t("subscription.actions.upgrade_error")
       toast.error(message)
-    },
-  })
-
-  const billingPortalMutation = useMutation({
-    mutationFn: async () => {
-      const data = await followClient.request<{ code: number; data?: { url: string } }>(
-        "/billing/portal",
-        {
-          method: "POST",
-          body: { returnUrl: proxyEnv.WEB_URL },
-        },
-      )
-      if (data.code === 0 && data.data?.url) {
-        await openURL(data.data.url)
-      }
-    },
-    onError: () => {
-      toast.error(t("subscription.actions.manage_error"))
     },
   })
 
@@ -618,6 +635,36 @@ export const PlanScreen: NavigationControllerView = () => {
               </Text>
             )}
           </Pressable>
+        )}
+
+        {Platform.OS === "ios" && (
+          <View className="gap-1 px-2">
+            <Text className="text-center text-xs leading-5 text-secondary-label">
+              {t("subscription.legal.auto_renewal_apple")}
+            </Text>
+            <View className="flex-row flex-wrap justify-center gap-x-2">
+              <Pressable
+                accessibilityRole="link"
+                onPress={() =>
+                  void openURL("https://www.apple.com/legal/internet-services/itunes/dev/stdeula/")
+                }
+                className="min-h-11 justify-center px-2"
+              >
+                <Text className="text-center text-sm text-link underline">
+                  {t("subscription.legal.terms_of_use")}
+                </Text>
+              </Pressable>
+              <Pressable
+                accessibilityRole="link"
+                onPress={() => void openURL("https://folo.is/privacy-policy")}
+                className="min-h-11 justify-center px-2"
+              >
+                <Text className="text-center text-sm text-link underline">
+                  {t("subscription.legal.privacy_policy")}
+                </Text>
+              </Pressable>
+            </View>
+          </View>
         )}
       </View>
     </SafeNavigationScrollView>
@@ -903,7 +950,7 @@ const PlanCard = ({
       </View>
 
       <View className="mt-4 gap-2">
-        {features.map(([featureKey, value]: readonly [PropertyKey, unknown]) => {
+        {features.map(([featureKey, value]) => {
           const formattedValue = formatFeatureValue(featureKey, value, t)
           const showValue = !(typeof value === "boolean" && value)
           return (

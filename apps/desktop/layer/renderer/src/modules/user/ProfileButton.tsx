@@ -3,7 +3,7 @@ import { RSSHubLogo } from "@follow/components/ui/platform-icon/icons.js"
 import { RootPortal } from "@follow/components/ui/portal/index.js"
 import { EllipsisHorizontalTextWithTooltip } from "@follow/components/ui/typography/EllipsisWithTooltip.js"
 import { useMeasure } from "@follow/hooks"
-import { useUserRole } from "@follow/store/user/hooks"
+import { useUserRole, useWhoami } from "@follow/store/user/hooks"
 import { cn } from "@follow/utils/utils"
 import type { FC } from "react"
 import { memo, useCallback, useLayoutEffect, useState } from "react"
@@ -38,23 +38,40 @@ export type ProfileButtonProps = LoginProps & {
 export const ProfileButton: FC<ProfileButtonProps> = memo((props) => {
   const serverConfig = useServerConfigs()
   const { status, session } = useSession()
-  const { user } = session || {}
+  const whoami = useWhoami()
+  const user = session?.user ?? whoami
   const settingModalPresent = useSettingModal()
   const presentUserProfile = usePresentUserProfileModal("dialog")
   const { t } = useTranslation()
   const aiEnabled = useFeature("ai")
-  const wallet = useWallet()
-  const hasPowerToken = !!wallet.data?.[0]?.powerToken
-
   const [dropdown, setDropdown] = useState(false)
+  // The wallet only decides whether the menu lists the wallet entry, so it is not requested
+  // before the menu is opened. The cached answer keeps the entry stable afterwards.
+  const wallet = useWallet({ enabled: dropdown })
+  const hasPowerToken = !!wallet.data?.[0]?.powerToken
 
   const navigate = useNavigate()
 
   const role = useUserRole()
   const isInMASReview = useIsInMASReview()
 
-  if (status !== "authenticated") {
-    return <LoginButton {...props} />
+  if (status !== "authenticated" && !user) {
+    return (
+      <>
+        <ActionButton
+          data-testid="guest-settings-button"
+          tooltip={t("user_button.preferences")}
+          shortcut="$mod+,"
+          disableTriggerShortcut
+          onClick={() => {
+            settingModalPresent()
+          }}
+        >
+          <i className="i-mgc-settings-7-cute-re size-5 text-text-secondary" />
+        </ActionButton>
+        <LoginButton {...props} />
+      </>
+    )
   }
 
   return (
@@ -65,9 +82,13 @@ export const ProfileButton: FC<ProfileButtonProps> = memo((props) => {
         data-testid="profile-menu-trigger"
       >
         {props.animatedAvatar ? (
-          <TransitionAvatar stage={dropdown ? "zoom-in" : ""} />
+          <TransitionAvatar data-testid="profile-menu-trigger" stage={dropdown ? "zoom-in" : ""} />
         ) : (
-          <UserAvatar hideName className="size-6 p-0 [&_*]:border-0" />
+          <UserAvatar
+            data-testid="profile-menu-trigger"
+            hideName
+            className="size-6 p-0 [&_*]:border-0"
+          />
         )}
       </DropdownMenuTrigger>
 

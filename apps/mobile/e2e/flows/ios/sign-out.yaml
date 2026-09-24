@@ -34,7 +34,7 @@ appId: is.follow
       id: settings-sign-out
     direction: DOWN
     timeout: 15000
-    centerElement: false
+    centerElement: true
 - tapOn:
     id: settings-sign-out
 - extendedWaitUntil:
@@ -42,6 +42,10 @@ appId: is.follow
     timeout: 10000
 - tapOn:
     text: Sign Out
+- launchApp:
+    stopApp: false
+- waitForAnimationToEnd:
+    timeout: 15000
 - extendedWaitUntil:
     visible:
       id: login-provider-credential

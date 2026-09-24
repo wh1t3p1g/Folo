@@ -137,7 +137,7 @@ build_ios_simulator_app() {
       -destination "id=${device_id}" \
       build \
       "$@"
-  )
+  ) >&2
 
   find "$HOME/Library/Developer/Xcode/DerivedData" -path '*Build/Products/Release-iphonesimulator/Folo.app' | head -n1
 }
@@ -176,8 +176,13 @@ case "${platform}" in
 
     case "${mode}" in
       full)
+        mkdir -p "${debug_output}/auth" "${debug_output}/content"
         maestro test --format junit --platform ios --device "${device_id}" --debug-output "${debug_output}/auth" \
+          --output "${debug_output}/auth/junit.xml" \
           -e E2E_EMAIL="${E2E_EMAIL}" -e E2E_PASSWORD="${E2E_PASSWORD}" e2e/flows/ios/auth.yaml
+        maestro test --format junit --platform ios --device "${device_id}" --debug-output "${debug_output}/content" \
+          --output "${debug_output}/content/junit.xml" \
+          -e E2E_EMAIL="${E2E_EMAIL}" -e E2E_PASSWORD="${E2E_PASSWORD}" e2e/flows/ios/content.yaml
         ;;
       bootstrap-auth)
         run_ios_bootstrap_auth "${device_id}"
