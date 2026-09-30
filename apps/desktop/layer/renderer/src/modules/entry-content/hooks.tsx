@@ -9,6 +9,8 @@ import { useShowAITranslation } from "~/atoms/ai-translation"
 import { useEntryIsInReadability, useEntryIsInReadabilitySuccess } from "~/atoms/readability"
 import { useActionLanguage, useGeneralSettingKey } from "~/atoms/settings/general"
 import { useModalStack } from "~/components/ui/modal/stacked/hooks"
+import { useByokTranslation } from "~/hooks/biz/useByokTranslation"
+import { isByokEnabled } from "~/lib/byok-settings"
 
 import { ImageGalleryContent } from "./components/ImageGalleryContent"
 
@@ -49,22 +51,33 @@ export const useEntryContent = (entryId: string) => {
   const enableTranslation = useShowAITranslation()
   const actionLanguage = useActionLanguage()
   const translationMode = useGeneralSettingKey("translationMode")
+  const target = isReadabilitySuccess ? "readabilityContent" : "content"
+  const byokEnabled = isByokEnabled()
+
+  const { translation: byokTranslation } = useByokTranslation({
+    entryId,
+    language: actionLanguage,
+    enabled: enableTranslation && byokEnabled,
+    withContent: true,
+    target,
+  })
+
   const contentTranslated = useEntryTranslation({
     entryId,
     language: actionLanguage,
-    enabled: enableTranslation,
+    enabled: enableTranslation && !byokEnabled,
   })
   usePrefetchEntryTranslation({
     entryIds: [entryId],
-    enabled: enableTranslation,
+    enabled: enableTranslation && !byokEnabled,
     language: actionLanguage,
     withContent: true,
-    target: isReadabilitySuccess ? "readabilityContent" : "content",
+    target,
     mode: translationMode,
   })
 
   // Use BYOK translation if available, otherwise fall back to server translation
-  const finalTranslation = contentTranslated
+  const finalTranslation = byokEnabled ? byokTranslation : contentTranslated
 
   return useMemo(() => {
     const entryContent = isInReadabilityMode
