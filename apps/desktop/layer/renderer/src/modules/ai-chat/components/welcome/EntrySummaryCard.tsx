@@ -36,6 +36,8 @@ export const EntrySummaryCard: React.FC<EntrySummaryCardProps> = ({ entryId, cla
         isLoading={summary.isLoading}
         className={className}
         title={t("ai_summary")}
+        onRegenerate={() => void summary.refetch()}
+        isRegenerating={summary.isFetching && !summary.isLoading}
         error={summary.error}
       />
     </m.div>

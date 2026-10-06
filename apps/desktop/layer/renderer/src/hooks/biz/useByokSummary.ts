@@ -8,12 +8,12 @@
 import type { SupportedActionLanguage } from "@follow/shared"
 import { toApiSupportedActionLanguage } from "@follow/shared"
 import { useEntry, usePrefetchEntryDetail } from "@follow/store/entry/hooks"
-import { summaryActions, useSummaryStore } from "@follow/store/summary/store"
+import { summaryActions } from "@follow/store/summary/store"
 import type { SupportedLanguages } from "@follow-app/client-sdk"
 import { useQuery } from "@tanstack/react-query"
 
-import { generateSummaryWithByok } from "~/lib/byok-ai"
-import { useIsByokEnabled, useIsByokModeEnabled } from "~/lib/byok-settings"
+import { generateSummaryWithByok, getByokSummaryCacheIdentity } from "~/lib/byok-ai"
+import { getByokProvider, useIsByokEnabled, useIsByokModeEnabled } from "~/lib/byok-settings"
 
 import { followApi } from "../../lib/api-client"
 
@@ -40,9 +40,13 @@ export const resolveSummarySourceContent = ({
   entryContent?: SummaryContentSource | null
   entryDetail?: SummaryContentSource | null
 }) => {
-  const content = entryContent?.content ?? entryDetail?.content ?? null
-  const readabilityContent =
-    entryContent?.readabilityContent ?? entryDetail?.readabilityContent ?? null
+  const firstNonEmpty = (...values: Array<string | null | undefined>) =>
+    values.find((value) => !!value?.trim()) ?? null
+  const content = firstNonEmpty(entryContent?.content, entryDetail?.content)
+  const readabilityContent = firstNonEmpty(
+    entryContent?.readabilityContent,
+    entryDetail?.readabilityContent,
+  )
 
   return target === "readabilityContent"
     ? (readabilityContent ?? content)
@@ -57,7 +61,50 @@ export const shouldEnableSummaryQuery = ({
   enabled: boolean
   byokModeEnabled: boolean
   content?: string | null
-}) => enabled && (!!content || !byokModeEnabled)
+}) => enabled && (!!content?.trim() || !byokModeEnabled)
+
+export function requireSummaryContent(
+  summary: string | null | undefined,
+  source: "server" | "byok",
+): string {
+  const normalized = summary?.trim()
+  if (!normalized) {
+    throw new Error(source === "server" ? "SUMMARY_EMPTY_RESPONSE" : "BYOK_SUMMARY_EMPTY")
+  }
+  return normalized
+}
+
+export function getSummaryQueryIdentity({
+  content,
+  target,
+  language,
+  byokModeEnabled,
+  byokEnabled,
+  providerIdentity,
+}: {
+  content?: string | null
+  target: SummaryTarget
+  language: string
+  byokModeEnabled: boolean
+  byokEnabled: boolean
+  providerIdentity: string
+}): string {
+  const value = [
+    "summary-v2",
+    target,
+    language,
+    byokModeEnabled,
+    byokEnabled,
+    providerIdentity,
+    content ?? "",
+  ].join("\u0000")
+  let hash = 2166136261
+  for (const character of value) {
+    hash ^= character.codePointAt(0) ?? 0
+    hash = Math.imul(hash, 16777619)
+  }
+  return (hash >>> 0).toString(16)
+}
 
 /**
  * Custom usePrefetchSummary hook that supports BYOK
@@ -82,7 +129,7 @@ export function usePrefetchSummaryByok({
   }))
 
   // Prefetch entry detail to ensure content is loaded
-  const { data: entryDetail } = usePrefetchEntryDetail(entryId)
+  const { data: entryDetail, isFetched: isEntryDetailFetched } = usePrefetchEntryDetail(entryId)
 
   // The actual content to use for summary
   const content = resolveSummarySourceContent({
@@ -94,7 +141,27 @@ export function usePrefetchSummaryByok({
   // Only enable query when we have content (for BYOK) or always for server API
   const byokModeEnabled = useIsByokModeEnabled()
   const byokEnabled = useIsByokEnabled()
-  const shouldEnable = shouldEnableSummaryQuery({ enabled, byokModeEnabled, content })
+  const byokProvider = getByokProvider()
+  const providerIdentity =
+    byokModeEnabled && byokProvider
+      ? getByokSummaryCacheIdentity({
+          content: content ?? "",
+          language: actionLanguage,
+          title: entryContent?.title ?? entryDetail?.title ?? undefined,
+          provider: byokProvider,
+        })
+      : "server"
+  const queryIdentity = getSummaryQueryIdentity({
+    content,
+    target,
+    language: actionLanguage,
+    byokModeEnabled,
+    byokEnabled,
+    providerIdentity,
+  })
+  const shouldEnable =
+    shouldEnableSummaryQuery({ enabled, byokModeEnabled, content }) ||
+    (enabled && byokModeEnabled && !isEntryDetailFetched)
 
   // // Debug logging
   // console.log("[BYOK Summary Debug]", {
@@ -111,7 +178,7 @@ export function usePrefetchSummaryByok({
   // })
 
   return useQuery({
-    queryKey: ["summary", entryId, target, actionLanguage, "byok", byokModeEnabled, byokEnabled],
+    queryKey: ["summary", entryId, target, actionLanguage, "byok", queryIdentity],
     queryFn: async () => {
       // console.log("[BYOK Summary] queryFn called", {
       //   entryId,
@@ -119,32 +186,16 @@ export function usePrefetchSummaryByok({
       //   contentLength: content?.length,
       // })
 
-      // Check existing summary first
-      const state = useSummaryStore.getState()
-      const existing =
-        state.data[entryId]?.[storeLanguage]?.[
-          target === "content" ? "summary" : "readabilitySummary"
-        ]
-      if (existing) {
-        // console.log("[BYOK Summary] Found existing summary", {
-        //   entryId,
-        //   existing: existing.substring(0, 50),
-        // })
-        return existing
-      }
-
       // Check if BYOK is enabled
       if (byokModeEnabled) {
         // console.log("[BYOK Summary] Using BYOK mode")
         // Use BYOK to generate summary
-        if (!content) {
-          // This shouldn't happen due to shouldEnable check, but just in case
-          // console.error("[BYOK Summary] No content available!")
-          throw new Error("No content available for summary")
+        if (!content?.trim()) {
+          throw new Error("BYOK_SUMMARY_NO_CONTENT")
         }
 
         if (!byokEnabled) {
-          throw new Error("BYOK is enabled but no usable local API key is configured")
+          throw new Error("BYOK_SUMMARY_NO_PROVIDER")
         }
 
         const summary = await generateSummaryWithByok({
@@ -152,18 +203,6 @@ export function usePrefetchSummaryByok({
           language: actionLanguage,
           title: entryContent?.title ?? entryDetail?.title ?? undefined,
         })
-
-        if (summary) {
-          // Save to store
-          summaryActions.upsertMany([
-            {
-              entryId,
-              summary: target === "content" ? summary : "",
-              language: storeLanguage,
-              readabilitySummary: target === "readabilityContent" ? summary : null,
-            },
-          ])
-        }
 
         return summary
       } else {
@@ -176,18 +215,16 @@ export function usePrefetchSummaryByok({
         })
         // console.log("[BYOK Summary] Server API result:", { data: result.data?.substring(0, 50) })
 
-        const summary = result.data || ""
+        const summary = requireSummaryContent(result.data, "server")
 
-        if (summary) {
-          summaryActions.upsertMany([
-            {
-              entryId,
-              summary: target === "content" ? summary : "",
-              language: storeLanguage,
-              readabilitySummary: target === "readabilityContent" ? summary : null,
-            },
-          ])
-        }
+        summaryActions.upsertMany([
+          {
+            entryId,
+            summary: target === "content" ? summary : "",
+            language: storeLanguage,
+            readabilitySummary: target === "readabilityContent" ? summary : null,
+          },
+        ])
 
         return summary
       }

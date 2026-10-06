@@ -56,6 +56,8 @@ export function AISummary({ entryId }: { entryId: string }) {
       title={t("entry_content.ai_summary")}
       showAskAIButton={shouldShowAskAI}
       onAskAI={handleAskAI}
+      onRegenerate={() => void summary.refetch()}
+      isRegenerating={summary.isFetching && !summary.isLoading}
       error={summary.error}
     />
   )

@@ -34,6 +34,10 @@ interface AISummaryCardBaseProps {
   showAskAIButton?: boolean
   /** Callback when Ask AI button is clicked */
   onAskAI?: () => void
+  /** Callback to request a fresh summary */
+  onRegenerate?: () => void
+  /** Whether a fresh summary request is in flight */
+  isRegenerating?: boolean
 
   error?: Error | null
 }
@@ -107,6 +111,8 @@ export const AISummaryCardBase: React.FC<AISummaryCardBaseProps> = ({
   showCopyButton = true,
   showAskAIButton = false,
   onAskAI,
+  onRegenerate,
+  isRegenerating = false,
   error,
 }) => {
   const { t } = useTranslation("app")
@@ -216,6 +222,22 @@ export const AISummaryCardBase: React.FC<AISummaryCardBaseProps> = ({
               )}
             />
           )}
+
+          {onRegenerate && (
+            <MotionButtonBase
+              aria-label={t("ai.summary_retry")}
+              onClick={onRegenerate}
+              disabled={isRegenerating}
+              className="center size-7 rounded-lg text-text-tertiary transition-colors hover:bg-fill-secondary hover:text-text"
+            >
+              <i
+                className={cn(
+                  "i-mgc-refresh-2-cute-re text-base",
+                  isRegenerating && "animate-spin",
+                )}
+              />
+            </MotionButtonBase>
+          )}
         </div>
       </div>
 
@@ -233,7 +255,21 @@ export const AISummaryCardBase: React.FC<AISummaryCardBaseProps> = ({
             shouldSuggestUpgrade
           />
         ) : (
-          <DefaultEmptyState message={t("ai.summary_not_available")} />
+          <DefaultEmptyState
+            message={
+              error?.message === "BYOK_SUMMARY_NO_CONTENT"
+                ? t("ai.summary_no_content")
+                : error?.message === "BYOK_SUMMARY_NO_PROVIDER"
+                  ? t("ai.summary_no_provider")
+                  : error?.message === "SUMMARY_EMPTY_RESPONSE"
+                    ? t("ai.summary_empty_response")
+                    : error instanceof FollowAPIError
+                      ? t("ai.summary_not_available")
+                      : error
+                        ? t("ai.summary_generation_failed")
+                        : t("ai.summary_not_available")
+            }
+          />
         )}
       </AutoResizeHeight>
 

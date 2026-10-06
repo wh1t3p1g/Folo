@@ -57,6 +57,79 @@ export interface ByokSummaryOptions {
   title?: string
 }
 
+const SUMMARY_PROMPT_VERSION = "summary-v2"
+const SUMMARY_MAX_INPUT_CHARS = 24_000
+const SUMMARY_INITIAL_OUTPUT_TOKENS = 1_200
+const SUMMARY_MAX_OUTPUT_TOKENS = 2_200
+
+/** Convert feed HTML into a compact, readable source for the language model. */
+export function normalizeSummaryContent(content: string): string {
+  const normalized = content
+    .replaceAll(/<script[\s\S]*?<\/script>/gi, " ")
+    .replaceAll(/<style[\s\S]*?<\/style>/gi, " ")
+    .replaceAll(/<(?:br|\/p|\/div|\/li|\/h[1-6]|\/blockquote)>/gi, "\n")
+    .replaceAll(/<[^>]+>/g, " ")
+    .replaceAll(/&nbsp;/gi, " ")
+    .replaceAll(/&amp;/gi, "&")
+    .replaceAll(/&lt;/gi, "<")
+    .replaceAll(/&gt;/gi, ">")
+    .replaceAll(/[ \t]+/g, " ")
+    .replaceAll(/\s+([,.!?;:])/g, "$1")
+    .replaceAll(/\n[ \t]+/g, "\n")
+    .replaceAll(/\n{3,}/g, "\n\n")
+    .trim()
+
+  if (normalized.length <= SUMMARY_MAX_INPUT_CHARS) return normalized
+
+  const headLength = Math.floor(SUMMARY_MAX_INPUT_CHARS * 0.7)
+  const tailLength = SUMMARY_MAX_INPUT_CHARS - headLength
+  return `${normalized.slice(0, headLength)}\n\n[...middle of article omitted...]\n\n${normalized.slice(-tailLength)}`
+}
+
+export function getSummaryOutputTokenBudget(sourceLength: number): number {
+  if (sourceLength >= 8_000) return SUMMARY_MAX_OUTPUT_TOKENS
+  if (sourceLength >= 3_000) return 1_600
+  return SUMMARY_INITIAL_OUTPUT_TOKENS
+}
+
+export function shouldRetrySummaryCompletion(
+  finishReason: string | undefined,
+  outputTokens: number,
+): boolean {
+  return (
+    (finishReason === "length" || finishReason === "MAX_TOKENS") &&
+    outputTokens < SUMMARY_MAX_OUTPUT_TOKENS
+  )
+}
+
+function hashSummaryValue(value: string): string {
+  let hash = 2166136261
+  for (const character of value) {
+    hash ^= character.codePointAt(0) ?? 0
+    hash = Math.imul(hash, 16777619)
+  }
+  return (hash >>> 0).toString(16)
+}
+
+export function getByokSummaryCacheIdentity({
+  content,
+  language,
+  title,
+  provider,
+}: ByokSummaryOptions & { provider: UserByokProviderConfig }): string {
+  return hashSummaryValue(
+    [
+      SUMMARY_PROMPT_VERSION,
+      normalizeSummaryContent(content),
+      language,
+      title ?? "",
+      provider.provider,
+      provider.baseURL ?? "",
+      provider.apiKey,
+    ].join("\u0000"),
+  )
+}
+
 export interface ByokTitleGenerationOptions {
   messages: Array<{ role: string; content: string }>
 }
@@ -110,16 +183,22 @@ export async function generateSummaryWithByok(options: ByokSummaryOptions): Prom
   if (!provider || !provider.apiKey) {
     throw new Error("No valid BYOK provider configured")
   }
+  const apiKey = provider.apiKey
 
   const { content, language, title } = options
+  const normalizedContent = normalizeSummaryContent(content)
+  if (!normalizedContent) {
+    throw new Error("BYOK_SUMMARY_NO_CONTENT")
+  }
   const baseUrl = getProviderBaseUrl(provider)
+  const outputTokens = getSummaryOutputTokenBudget(normalizedContent.length)
 
   // Build the prompt
-  const systemPrompt = `You are a helpful assistant that summarizes content. Provide a concise summary in ${language === "default" ? "the same language as the content" : language}. Keep the summary brief and informative.`
+  const systemPrompt = `You summarize articles accurately in ${language === "default" ? "the same language as the content" : language}. Cover the main thesis, important facts, decisions, numbers, and conclusions. Do not invent details. Return 5-8 concise bullet points followed by one short takeaway sentence. If the supplied text is an excerpt, summarize only what is present.`
 
   const userPrompt = title
-    ? `Please summarize the following article titled "${title}":\n\n${content}`
-    : `Please summarize the following content:\n\n${content}`
+    ? `Summarize the following article titled "${title}":\n\n${normalizedContent}`
+    : `Summarize the following content:\n\n${normalizedContent}`
 
   // Determine model based on provider and baseURL
   let model = "gpt-4o-mini"
@@ -142,22 +221,53 @@ export async function generateSummaryWithByok(options: ByokSummaryOptions): Prom
     model = "glm-4-flash"
   }
 
-  let result: string
-  if (provider.provider === "google") {
-    // Google AI uses different API format
-    result = await callGoogleAI(baseUrl, provider.apiKey, systemPrompt, userPrompt, model)
-  } else {
-    // OpenAI-compatible API (OpenAI, OpenRouter, Vercel AI Gateway)
-    result = await callOpenAICompatible(
-      baseUrl,
-      provider.apiKey,
-      systemPrompt,
-      userPrompt,
-      model,
-      provider.headers,
-    )
+  const request = () =>
+    provider.provider === "google"
+      ? callGoogleAI(baseUrl, apiKey, systemPrompt, userPrompt, model, outputTokens)
+      : callOpenAICompatible(
+          baseUrl,
+          apiKey,
+          systemPrompt,
+          userPrompt,
+          model,
+          provider.headers,
+          outputTokens,
+        )
+
+  let result = await request()
+  if (shouldRetrySummaryCompletion(result.finishReason, outputTokens)) {
+    result =
+      provider.provider === "google"
+        ? await callGoogleAI(
+            baseUrl,
+            apiKey,
+            systemPrompt,
+            userPrompt,
+            model,
+            SUMMARY_MAX_OUTPUT_TOKENS,
+          )
+        : await callOpenAICompatible(
+            baseUrl,
+            apiKey,
+            systemPrompt,
+            userPrompt,
+            model,
+            provider.headers,
+            SUMMARY_MAX_OUTPUT_TOKENS,
+          )
   }
-  return result
+  if (shouldRetrySummaryCompletion(result.finishReason, SUMMARY_MAX_OUTPUT_TOKENS)) {
+    throw new Error("BYOK_SUMMARY_INCOMPLETE")
+  }
+  if (!result.text.trim()) {
+    throw new Error("BYOK_SUMMARY_EMPTY")
+  }
+  return result.text.trim()
+}
+
+interface ByokCompletion {
+  text: string
+  finishReason?: string
 }
 
 /**
@@ -170,7 +280,8 @@ async function callOpenAICompatible(
   userPrompt: string,
   model: string,
   customHeaders?: Record<string, string>,
-): Promise<string> {
+  maxTokens = 500,
+): Promise<ByokCompletion> {
   const response = await byokFetch(`${baseUrl}/chat/completions`, {
     method: "POST",
     headers: {
@@ -184,7 +295,7 @@ async function callOpenAICompatible(
         { role: "system", content: systemPrompt },
         { role: "user", content: userPrompt },
       ],
-      max_tokens: 500,
+      max_tokens: maxTokens,
       temperature: 0.3,
     }),
   })
@@ -195,9 +306,12 @@ async function callOpenAICompatible(
   }
 
   const data = (await response.json()) as {
-    choices?: Array<{ message?: { content?: string } }>
+    choices?: Array<{ message?: { content?: string }; finish_reason?: string }>
   }
-  return data.choices?.[0]?.message?.content || ""
+  return {
+    text: data.choices?.[0]?.message?.content || "",
+    finishReason: data.choices?.[0]?.finish_reason,
+  }
 }
 
 /**
@@ -209,7 +323,8 @@ async function callGoogleAI(
   systemPrompt: string,
   userPrompt: string,
   model: string,
-): Promise<string> {
+  maxOutputTokens = 500,
+): Promise<ByokCompletion> {
   const url = `${baseUrl}/models/${model}:generateContent?key=${apiKey}`
   const response = await byokFetch(url, {
     method: "POST",
@@ -223,7 +338,7 @@ async function callGoogleAI(
         },
       ],
       generationConfig: {
-        maxOutputTokens: 500,
+        maxOutputTokens,
         temperature: 0.3,
       },
     }),
@@ -235,9 +350,16 @@ async function callGoogleAI(
   }
 
   const data = (await response.json()) as {
-    candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }>
+    candidates?: Array<{
+      content?: { parts?: Array<{ text?: string }> }
+      finishReason?: string
+    }>
   }
-  return data.candidates?.[0]?.content?.parts?.[0]?.text || ""
+  const candidate = data.candidates?.[0]
+  return {
+    text: candidate?.content?.parts?.map((part) => part.text || "").join("") || "",
+    finishReason: candidate?.finishReason,
+  }
 }
 
 /**
@@ -290,16 +412,18 @@ Return ONLY the title text, nothing else. No quotes, no explanation.`
 
   let result: string
   if (provider.provider === "google") {
-    result = await callGoogleAI(baseUrl, provider.apiKey, systemPrompt, userPrompt, model)
+    result = (await callGoogleAI(baseUrl, provider.apiKey, systemPrompt, userPrompt, model)).text
   } else {
-    result = await callOpenAICompatible(
-      baseUrl,
-      provider.apiKey,
-      systemPrompt,
-      userPrompt,
-      model,
-      provider.headers,
-    )
+    result = (
+      await callOpenAICompatible(
+        baseUrl,
+        provider.apiKey,
+        systemPrompt,
+        userPrompt,
+        model,
+        provider.headers,
+      )
+    ).text
   }
   // Clean up the title - remove quotes and trim
   return result
@@ -368,16 +492,18 @@ ${JSON.stringify(fieldsToTranslate, null, 2)}`
 
   let result: string
   if (provider.provider === "google") {
-    result = await callGoogleAI(baseUrl, provider.apiKey, systemPrompt, userPrompt, model)
+    result = (await callGoogleAI(baseUrl, provider.apiKey, systemPrompt, userPrompt, model)).text
   } else {
-    result = await callOpenAICompatible(
-      baseUrl,
-      provider.apiKey,
-      systemPrompt,
-      userPrompt,
-      model,
-      provider.headers,
-    )
+    result = (
+      await callOpenAICompatible(
+        baseUrl,
+        provider.apiKey,
+        systemPrompt,
+        userPrompt,
+        model,
+        provider.headers,
+      )
+    ).text
   }
 
   // Parse the JSON response

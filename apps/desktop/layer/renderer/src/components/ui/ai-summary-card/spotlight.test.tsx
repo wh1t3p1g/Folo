@@ -133,4 +133,20 @@ describe("AISummaryCardBase spotlight", () => {
 
     expect(container.textContent).toContain("ai.summary_upgrade_required_title")
   })
+
+  test("explains when BYOK is enabled without a usable provider", async () => {
+    ;({ container, root } = await renderSummary(
+      <AISummaryCardBase error={new Error("BYOK_SUMMARY_NO_PROVIDER")} />,
+    ))
+
+    expect(container.textContent).toContain("ai.summary_no_provider")
+  })
+
+  test("explains when the summary service returns an empty response", async () => {
+    ;({ container, root } = await renderSummary(
+      <AISummaryCardBase error={new Error("SUMMARY_EMPTY_RESPONSE")} />,
+    ))
+
+    expect(container.textContent).toContain("ai.summary_empty_response")
+  })
 })
